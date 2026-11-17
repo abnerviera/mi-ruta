@@ -1,0 +1,72 @@
+MI RUTA: app de ventas para el iPad de Marilyn
+================================================
+
+Qué hace
+- Hoy: planificar la ruta del día (los pueblos que haga falta, en orden) y numerar las farmacias en el orden
+  en que las va a visitar. La app recuerda ese orden por pueblo para la próxima vez, y la ruta completa se puede
+  guardar con un nombre ("Ruta Este") para cargarla otro día con un toque.
+- Visita: qué hizo (venta, inventario, cheque, etc.), con quién habló (principal o alterno de recetario y de piso),
+  inventario de sus productos, competencia por marca en recetario y en piso, venta, término de pago y fecha de cobro.
+- Venta rápida (la forma inicial): marca los productos que vendió y escribe el total de la orden que ya llenó
+  en el form de la compañía. Con ese total la app lleva cobros, comisión, ranking y reporte.
+  En Ajustes se puede cambiar a venta detallada (cantidad y precio de cada producto).
+- Cobros: créditos al día (verde), por vencer (amarillo) y morosos (rojo), y marcar lo cobrado.
+- Resumen: ventas del mes, comisión y cuánto falta para la meta, ventas por mes, ranking de farmacias,
+  frecuencia de compra, ventas por pueblo y farmacias a las que les toca comprar.
+- Reporte: informe del día en narrativo y tablas para copiar al email, abrir en Mail, bajar en Excel o imprimir en PDF.
+- Ajustes: productos y precios, marcas de la competencia, comisión, días de aviso, respaldo y restauración.
+
+Esta carpeta NO tiene los datos de Marilyn. Los datos van aparte en "Mi Ruta datos iniciales.xlsx",
+así nada privado queda publicado en internet.
+
+
+1. Publicar la app (una sola vez)
+---------------------------------
+La app tiene que estar en una dirección https para instalarse en el iPad y funcionar sin internet.
+Con GitHub Pages es gratis:
+  a. Crea un repositorio público en GitHub (por ejemplo "mi-ruta").
+  b. Sube TODO el contenido de esta carpeta (index.html, sw.js, manifest.webmanifest, xlsx.full.min.js,
+     y las carpetas fonts e icons) a la raíz del repositorio.
+  c. En el repositorio: Settings > Pages > Source: "Deploy from a branch", rama main, carpeta / (root).
+  d. En un par de minutos queda en https://TU-USUARIO.github.io/mi-ruta/
+Sirve cualquier otro hosting estático con https.
+
+
+2. Instalar en el iPad
+----------------------
+  a. Envíale a Marilyn el archivo "Mi Ruta datos iniciales.xlsx" (email o AirDrop) y que lo guarde en Archivos.
+  b. En el iPad, abre la dirección de la app en Safari.
+  c. Toca el botón Compartir y luego "Añadir a pantalla de inicio".
+  d. Abre la app SIEMPRE desde ese ícono (no desde Safari). La primera vez, toca "Cargar archivo"
+     y escoge "Mi Ruta datos iniciales.xlsx".
+Después de esto funciona sin internet.
+
+
+3. Cuidar los datos
+-------------------
+- Los datos se guardan solo dentro del ícono de Mi Ruta en ese iPad. Si se borra el ícono, se borran los datos.
+- Una vez por semana: Ajustes > Guardar respaldo, y guardarlo en Archivos o enviarlo por email.
+  El respaldo es un Excel que se puede abrir para ver farmacias, ventas y visitas.
+- Para pasar todo a otro iPad: instalar la app y usar Ajustes > Restaurar respaldo.
+
+
+4. Publicar cambios
+-------------------
+Sube los archivos nuevos al mismo repositorio y cambia el nombre de la versión en sw.js
+(por ejemplo, const CACHE = "miruta-v1.2"). El iPad baja la versión nueva la próxima vez que se abra con internet
+y la usa a partir de la siguiente vez que se abra.
+
+
+Supuestos que se tomaron con los datos del Excel
+------------------------------------------------
+- Se unificaron 245 formas distintas de escribir los nombres en 153 farmacias.
+- Ventas a crédito ya vencidas al 16 de noviembre de 2026: se marcaron como cobradas.
+  Las 29 que todavía estaban dentro de su plazo ($8,095.79) aparecen en Cobros como pendientes.
+- "COD" sin decir cheque o cash se tomó como COD cheque. "Crédito" sin días se tomó como 30 días.
+- Las ventas COD y ACH se dan por cobradas al entregar, a menos que se marque "Queda pendiente de cobro".
+- Precios (solo se usan en la venta detallada): Oferta 6 en 1 $41.94, Oferta 20 en 4 $139.80, tirillas $4.50 sugerido (cambia por farmacia y la app
+  recuerda el último), monitor $7.99, lancetas $1.25, lancetero $2.50. MedPride, Padimont, Red Cross,
+  Global y Underpads están sin precio: se escribe en la venta o se fija en Ajustes.
+- Las marcas de la competencia son una lista inicial; se editan en Ajustes.
+- Comisión: $600 fijo por debajo de $20,000; al llegar a $20,000, 4% de toda la venta del mes.
+  Se puede cambiar en Ajustes a "fijo más 4% de lo que pase de la meta".
