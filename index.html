@@ -276,7 +276,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.6";
+const APP_VERSION = "1.7";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -698,13 +698,15 @@ function visitSummary(v) {
    ========================================================= */
 let draft = null;
 function newDraft(phId, date, channel) {
+  derive();
   const x = P(phId);
   const call = channel === "llamada";
   const lv = call ? null : x.lastVisit;
   return {
     channel: call ? "llamada" : "visita", requestVisit: false,
     id: null, date: date || today(), pharmacyId: phId, actions: call ? ["Venta"] : [], other: "", spoke: [], otherName: "", otherArea: "Recetario",
-    inventory: {}, comp: {recetario: lv ? [...(lv.comp?.recetario || [])] : [], piso: lv ? [...(lv.comp?.piso || [])] : []}, compFrom: lv ? lv.date : null,
+    inventory: {}, ...invPrefill(x),
+    comp: {recetario: lv ? [...(lv.comp?.recetario || [])] : [], piso: lv ? [...(lv.comp?.piso || [])] : []}, compFrom: lv ? lv.date : null,
     compQty: {recetario: "", piso: ""}, compQtyLast: lv && lv.comp && lv.comp.qty ? {...lv.comp.qty} : {},
     items: [], term: x.p.term || "COD cheque", pending: false, saleNote: "", collect: {}, notes: "", saleId: null, dirty: false,
     mode: S.settings.saleMode || "rapida", quickTotal: "",
@@ -719,7 +721,9 @@ function draftFromVisit(v) {
     channel: v.channel || "visita", requestVisit: !!v.requestVisit,
     id: v.id, date: v.date, pharmacyId: v.pharmacyId, actions: v.channel === "llamada" ? ["Venta"] : [...(v.actions || [])], other: v.other || "",
     spoke: (v.spoke || []).filter(s => s.role !== "otro").map(s => s.role), otherName: other ? other.name : "", otherArea: other ? other.area : "Recetario",
-    inventory: {...(v.inventory || {})}, comp: {recetario: [...(v.comp?.recetario || [])], piso: [...(v.comp?.piso || [])]}, compFrom: null,
+    inventory: {}, invItems: v.invItems ? [...v.invItems] : Object.keys(v.inventory || {}),
+    invTotal: v.invTotal ?? (v.inventory && Object.keys(v.inventory).length ? Object.values(v.inventory).reduce((a, q) => a + (Number(q) || 0), 0) : ""), invFrom: null, invTotalLast: null,
+    comp: {recetario: [...(v.comp?.recetario || [])], piso: [...(v.comp?.piso || [])]}, compFrom: null,
     compQty: {recetario: v.comp?.qty?.recetario ?? "", piso: v.comp?.qty?.piso ?? ""}, compQtyLast: {},
     items: sale ? sale.items.map(i => ({...i})) : [], term: sale ? sale.term : (P(v.pharmacyId)?.p.term || "COD cheque"),
     pending: sale ? (!isCredit(sale.term) && saleBalance(sale) > 0) : false, saleNote: sale ? sale.note || "" : "",
@@ -788,10 +792,9 @@ function viewVisita(arg) {
     }).join("")}</div>` : `<p class="muted">Esta farmacia no tiene balances pendientes.</p>`}</div>`;
   }
   if (has("Verificar inventario")) {
-    const lastInv = x.visits.find(v => v.id !== draft.id && v.inventory && Object.keys(v.inventory).length);
-    h += `<div class="v-sec"><h2>Inventario de tus productos</h2>${lastInv ? `<p class="small muted" style="margin-bottom:8px">Entre paréntesis, lo que había el ${esc(fmtD(lastInv.date))}.</p>` : ""}
-      <div class="panel inv-grid">${S.products.filter(q => q.inv && q.active).map(q => `<div class="r"><span>${esc(q.name)}${lastInv && lastInv.inventory[q.id] != null ? ` <span class="muted small">(${lastInv.inventory[q.id]})</span>` : ""}</span>
-        <div class="stepper"><button data-act="vInv" data-id="${q.id}" data-d="-1" aria-label="Menos">−</button><input type="number" inputmode="numeric" min="0" value="${draft.inventory[q.id] ?? ""}" placeholder="–" data-bind-inv="${q.id}" aria-label="Inventario de ${esc(q.name)}"><button data-act="vInv" data-id="${q.id}" data-d="1" aria-label="Más">+</button></div></div>`).join("")}</div></div>`;
+    h += `<div class="v-sec"><h2>Inventario de tus productos</h2><p class="small muted" style="margin-bottom:10px">${draft.invFrom ? `Marcados según la visita del ${esc(fmtD(draft.invFrom))}. Ajusta lo que cambió.` : "Marca los productos que tiene la farmacia."}</p>
+      <div class="chips">${S.products.filter(q => q.inv && q.active).map(q => `<button class="chip" aria-pressed="${draft.invItems.includes(q.id)}" data-act="vInvPick" data-id="${q.id}">${esc(q.name)}</button>`).join("")}</div>
+      <label class="field" style="margin-top:14px;max-width:260px"><span>Cantidad total (opcional)</span><input type="number" inputmode="numeric" min="0" value="${esc(draft.invTotal ?? "")}" placeholder="${draft.invTotalLast != null ? `Última visita: ${draft.invTotalLast}` : "0"}" data-bind="invTotal" aria-label="Cantidad total de tus productos en la farmacia"></label></div>`;
   }
   if (call) h += `<div class="v-sec"><h2>Visita</h2><label class="toggle"><input type="checkbox" ${draft.requestVisit ? "checked" : ""} data-bind-check="requestVisit"> Pidió que pase por la farmacia</label>
     <p class="small muted">Cuando planifiques una ruta por ${esc(p.pueblo)}, esta farmacia sale primero con el aviso «Pidió visita».</p></div>`;
@@ -810,6 +813,16 @@ function saleTermBlock(due) {
     <label class="field" style="margin-top:8px"><span>Nota de la venta</span><input type="text" value="${esc(draft.saleNote)}" placeholder="Opcional" data-bind="saleNote"></label></div>`;
 }
 const itemsText = items => (items || []).map(i => i.qty ? `${i.qty} ${i.name}` : i.name);
+function hasInvData(v) { return !!v && (((v.invItems || []).length > 0) || v.invTotal != null || (v.inventory && Object.keys(v.inventory).length > 0)); }
+function invText(v) {
+  if (!hasInvData(v)) return "";
+  if ((v.invItems || []).length || v.invTotal != null) return ((v.invItems || []).map(id => product(id)?.name || id).join(", ") || "sin productos marcados") + (v.invTotal != null ? ` (${v.invTotal} en total)` : "");
+  return Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ");
+}
+function invPrefill(x) {
+  const li = x.visits.find(v => v.channel !== "llamada" && hasInvData(v));
+  return {invItems: li ? (li.invItems && li.invItems.length ? [...li.invItems] : Object.keys(li.inventory || {})) : [], invTotal: "", invFrom: li ? li.date : null, invTotalLast: li && li.invTotal != null ? li.invTotal : null};
+}
 function compQtyOf(d) {
   const q = {}; for (const a of ["recetario", "piso"]) { const v = d.compQty?.[a]; q[a] = v === "" || v == null || isNaN(parseInt(v)) ? null : Math.max(0, parseInt(v)); }
   return q;
@@ -867,10 +880,11 @@ function saveVisit() {
   }
   const spoke = d.spoke.map(r => ({role: r, name: x.p.contacts[r] || ""}));
   if (d.otherName.trim()) spoke.push({role: "otro", area: d.otherArea, name: d.otherName.trim()});
-  const inv = {}; for (const [k, v] of Object.entries(d.inventory)) if (v !== "" && v != null) inv[k] = Number(v);
+  const checkedInv = !call && d.actions.includes("Verificar inventario");
+  const invTotal = d.invTotal === "" || d.invTotal == null || isNaN(parseInt(d.invTotal)) ? null : Math.max(0, parseInt(d.invTotal));
   const visit = {id: vid, date: d.date, time: new Date().toTimeString().slice(0, 5), pharmacyId: d.pharmacyId, channel: call ? "llamada" : "visita", requestVisit: call ? !!d.requestVisit : false,
     actions: call ? [] : d.actions.slice(), other: call ? "" : d.other.trim(), spoke,
-    inventory: !call && d.actions.includes("Verificar inventario") ? inv : {}, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice(), qty: compQtyOf(d)}, saleId, notes: d.notes.trim()};
+    inventory: {}, invItems: checkedInv ? d.invItems.slice() : [], invTotal: checkedInv ? invTotal : null, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice(), qty: compQtyOf(d)}, saleId, notes: d.notes.trim()};
   if (call) {
     if (d.requestVisit) x.p.visitRequest = {date: d.date, callId: vid};
     else if (x.p.visitRequest && x.p.visitRequest.callId === vid) delete x.p.visitRequest;
@@ -920,7 +934,7 @@ function viewFarmacia(id) {
   const events = [...x.sales.map(s => ({d: s.date, s})), ...x.visits.filter(v => !v.saleId).map(v => ({d: v.date, v}))].sort((a, b) => a.d < b.d ? 1 : -1);
   const year = x.sales.filter(s => s.date.slice(0, 4) === today().slice(0, 4)).reduce((a, s) => a + s.total, 0);
   const lv = x.lastVisit;
-  const lastInv = x.visits.find(v => v.inventory && Object.keys(v.inventory).length);
+  const lastInv = x.visits.find(v => hasInvData(v));
   return `<div class="page-head"><div><button class="link" data-act="nav" data-to="farmacias">Farmacias</button><h1>${esc(p.name)}</h1><div class="sub">${esc(p.pueblo)}, ${esc(p.term || "")}${p.phone ? `, <a href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}" style="color:var(--pino)">${esc(p.phone)}</a>` : ""}</div>
       <div class="row wrap" style="margin-top:8px;gap:6px">${phTags(x)}</div></div>
     <div class="row"><button class="btn quiet" data-act="editPh" data-id="${p.id}">Editar</button><button class="btn" data-act="newCall" data-id="${p.id}">${ico("tel")}Pedido por teléfono</button><button class="btn primary" data-act="newVisit" data-id="${p.id}">Registrar visita</button></div></div>
@@ -937,7 +951,7 @@ function viewFarmacia(id) {
           ${(p.otherContacts || []).length ? `<p class="small muted" style="margin-top:10px">Otros nombres en el historial: ${esc(p.otherContacts.join(", "))}</p>` : ""}</div>
         <div class="panel"><h2 style="margin-bottom:8px">Última visita</h2>${lv ? `<p><b>${esc(cap(fmtD(lv.date, {weekday: "long", day: "numeric", month: "long"})))}</b>: ${esc(visitSummary(lv))}</p>
           ${compText(lv.comp) ? `<p class="small" style="margin-top:8px">${esc(cap(compText(lv.comp)))}.</p>` : ""}
-          ${lastInv ? `<p class="small" style="margin-top:8px">Inventario del ${esc(fmtD(lastInv.date))}: ${esc(Object.entries(lastInv.inventory).map(([k, v]) => `${product(k)?.name || k} ${v}`).join(", "))}.</p>` : ""}` : `<p class="muted">Sin visitas registradas en la app.</p>`}</div>
+          ${lastInv ? `<p class="small" style="margin-top:8px">Inventario del ${esc(fmtD(lastInv.date))}: ${esc(invText(lastInv))}.</p>` : ""}` : `<p class="muted">Sin visitas registradas en la app.</p>`}</div>
         ${p.prices && Object.keys(p.prices).length ? `<div class="panel"><h2 style="margin-bottom:8px">Precios acordados</h2>${Object.entries(p.prices).map(([k, v]) => `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(product(k)?.name || k)}</span><b class="num">${money(v)}</b></div>`).join("")}</div>` : ""}
         ${p.notes ? `<div class="panel"><h2 style="margin-bottom:8px">Notas</h2><p>${esc(p.notes)}</p></div>` : ""}</div></div>`;
 }
@@ -1173,11 +1187,11 @@ function buildReport(d) {
       if (s) bits.push(`vendí ${listJoin(itemsText(s.items))} por ${money(s.total)}, ${termTxt(s)}`);
       const pv = pays.filter(x => x.p.visitId === v.id);
       if (pv.length) bits.push(`recogí ${money(pv.reduce((a, x) => a + Number(x.p.amount), 0))} en ${listJoin([...new Set(pv.map(x => x.p.method.toLowerCase()))])}`);
-      const hasInv = v.inventory && Object.keys(v.inventory).length;
+      const hasInv = hasInvData(v);
       const otherActs = (v.actions || []).filter(a => !["Venta", "Hablar con contacto", "Recoger cheque"].includes(a) && !(hasInv && a === "Verificar inventario")).map(a => a.toLowerCase());
       if (v.other) otherActs.push(v.other);
       if (otherActs.length) bits.push(`gestiones: ${otherActs.join(", ")}`);
-      if (hasInv) bits.push(`inventario: ${Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ")}`);
+      if (hasInv) bits.push(`inventario: ${invText(v)}`);
       if (compText(v.comp)) bits.push(compText(v.comp));
       t += bits.length ? cap(bits.join("; ")) + "." : "Visita registrada.";
       if (v.notes) t += ` Nota: ${v.notes}`;
@@ -1294,7 +1308,7 @@ async function exportBackup() {
   const vRows = [["Fecha", "Hora", "Tipo", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Cantidad competencia recetario", "Competencia piso", "Cantidad competencia piso", "Venta", "Notas"]];
   for (const v of [...S.visits].sort((a, b) => a.date < b.date ? -1 : 1)) {
     const p = P(v.pharmacyId)?.p; const s = v.saleId && S.sales.find(x => x.id === v.saleId);
-    vRows.push([v.date, v.time || "", v.channel === "llamada" ? "Teléfono" : "Visita", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), Object.entries(v.inventory || {}).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", "), (v.comp?.recetario || []).join(", "), v.comp?.qty?.recetario ?? "", (v.comp?.piso || []).join(", "), v.comp?.qty?.piso ?? "", s ? s.total : "", v.notes || ""]);
+    vRows.push([v.date, v.time || "", v.channel === "llamada" ? "Teléfono" : "Visita", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), invText(v), (v.comp?.recetario || []).join(", "), v.comp?.qty?.recetario ?? "", (v.comp?.piso || []).join(", "), v.comp?.qty?.piso ?? "", s ? s.total : "", v.notes || ""]);
   }
   XLSX.utils.book_append_sheet(wb, sheet(phRows, [14, 34, 12, 16, 22, 22, 22, 22, 30, 30, 8]), "Farmacias");
   XLSX.utils.book_append_sheet(wb, sheet(sRows, [11, 34, 14, 44, 10, 12, 13, 10, 10, 12, 40, 8]), "Ventas");
@@ -1447,6 +1461,7 @@ const A = {
   vQty(el) { const it = draft.items[el.dataset.i]; it.qty = Math.max(1, (Number(it.qty) || 0) + Number(el.dataset.d)); draft.dirty = true; keepScroll(render); },
   vRm(el) { draft.items.splice(el.dataset.i, 1); draft.dirty = true; keepScroll(render); },
   vTerm(el) { draft.term = el.dataset.t; draft.dirty = true; keepScroll(render); },
+  vInvPick(el) { const a = draft.invItems; const i = a.indexOf(el.dataset.id); i >= 0 ? a.splice(i, 1) : a.push(el.dataset.id); draft.dirty = true; keepScroll(render); },
   vInv(el) { const k = el.dataset.id; const cur = Number(draft.inventory[k]) || 0; draft.inventory[k] = Math.max(0, cur + Number(el.dataset.d)); draft.dirty = true; keepScroll(render); },
   vComp(el) { const arr = draft.comp[el.dataset.area]; const b = el.dataset.b; const i = arr.indexOf(b); i >= 0 ? arr.splice(i, 1) : arr.push(b); draft.dirty = true; keepScroll(render); },
   vNewBrand(el) {

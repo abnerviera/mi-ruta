@@ -6,7 +6,7 @@ Qué hace
   en que las va a visitar. La app recuerda ese orden por pueblo para la próxima vez, y la ruta completa se puede
   guardar con un nombre ("Ruta Este") para cargarla otro día con un toque.
 - Visita: qué hizo (venta, inventario, cheque, etc.), con quién habló (principal o alterno de recetario y de piso),
-  inventario de sus productos, competencia por marca en recetario y en piso (con una cantidad total por área),
+  inventario de sus productos (marca los que tiene la farmacia y, si quiere, una cantidad total), competencia por marca en recetario y en piso (con una cantidad total por área),
   venta, término de pago y fecha de cobro.
 - Venta rápida (la forma inicial): marca los productos que vendió y escribe el total de la orden que ya llenó
   en el form de la compañía. Con ese total la app lleva cobros, comisión, ranking y reporte.
