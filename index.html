@@ -137,6 +137,7 @@ button.item:active{background:var(--papel)}
 .tag.aldia,.tag.pagada{background:var(--verde-fondo);color:var(--verde-tinta)}
 .tag.toca{background:#fff;color:var(--pino);border:1.5px solid var(--pino-medio)}
 .tag.excel{background:var(--papel);color:var(--gris);border:1px solid var(--linea)}
+.tag.pide{background:#fff;color:var(--ambar-tinta);border:1.5px solid var(--ambar)}
 .tag.hecha{background:var(--pino);color:#fff}
 
 /* ---------- route line (the signature element) ---------- */
@@ -275,7 +276,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.3";
+const APP_VERSION = "1.4";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -471,7 +472,7 @@ function derive() {
     x.since = x.last ? daysBetween(x.last, t) : null;
     x.toca = x.freq && x.since != null && x.since >= Math.max(7, x.freq);
     x.bal = r2(x.bal);
-    x.lastVisit = x.visits[0] || null;
+    x.lastVisit = x.visits.find(v => v.channel !== "llamada") || null;
   }
   const pueblos = [...new Set(S.pharmacies.filter(p => p.active !== false).map(p => p.pueblo).concat(S.extraPueblos || []))].sort((a, b) => a.localeCompare(b, "es"));
   D = {rev, ph, pueblos, t};
@@ -534,6 +535,7 @@ function phTags(x) {
   let h = "";
   if (x.bal > 0) h += tagFor(x.worst, (x.worst === "morosa" ? "Morosa " : x.worst === "porvencer" ? "Por vencer " : x.worst === "recoger" ? "Recoger " : "Debe ") + money(x.bal));
   if (x.toca) h += `<span class="tag toca">Le toca comprar</span>`;
+  if (x.p.visitRequest) h += `<span class="tag pide">${ico("tel")}Pidió visita</span>`;
   return h;
 }
 
@@ -561,12 +563,15 @@ function pueblosPharmacies(pu) {
   const ord = pueblosOrder(pu);
   const rank = id => { const i = ord.indexOf(id); return i < 0 ? 1e6 : i; };
   return S.pharmacies.filter(p => p.pueblo === pu && p.active !== false).map(p => D.ph[p.id])
-    .sort((a, b) => rank(a.p.id) - rank(b.p.id) || prio(b) - prio(a) || a.p.name.localeCompare(b.p.name, "es"));
+    .sort((a, b) => (b.p.visitRequest ? 1 : 0) - (a.p.visitRequest ? 1 : 0) || rank(a.p.id) - rank(b.p.id) || prio(b) - prio(a) || a.p.name.localeCompare(b.p.name, "es"));
 }
 function defaultRouteName(pueblos) { return listJoin(pueblos); }
 function planner(d) {
   if (!planDraft || planDraft.date !== d) planDraft = {date: d, pueblos: [], stops: [], routeId: null, saveAs: false, name: ""};
   const pd = planDraft;
+  const reqs = S.pharmacies.filter(p => p.visitRequest && p.active !== false);
+  const reqBlock = reqs.length ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--pino-medio)"><p style="font-weight:700;margin-bottom:8px">Pidieron que pases por la farmacia</p>
+    <div class="chips">${reqs.map(p => `<button class="chip" aria-pressed="${pd.stops.includes(p.id)}" data-act="planAddReq" data-id="${p.id}">${esc(p.name)} <small style="font-weight:400">${esc(p.pueblo)}, llamó el ${esc(fmtD(p.visitRequest.date))}</small></button>`).join("")}</div></div>` : "";
   const chips = D.pueblos.map(p => {
     const i = pd.pueblos.indexOf(p);
     return `<button class="chip" aria-pressed="${i >= 0}" data-act="planPueblo" data-p="${esc(p)}">${i >= 0 ? `<span class="ord">${i + 1}</span>` : ""}${esc(p)}</button>`;
@@ -587,7 +592,7 @@ function planner(d) {
       <button class="mv" data-act="planMove" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} aria-label="Subir">↑</button><button class="mv" data-act="planMove" data-i="${i}" data-d="1" ${i === pd.stops.length - 1 ? "disabled" : ""} aria-label="Bajar">↓</button><button class="mv" data-act="planToggle" data-id="${id}" aria-label="Quitar">×</button></li>`; }).join("");
   return `<div class="panel tint"><h2 style="margin-bottom:4px">Planifica la ruta</h2>
     ${routes ? `<p class="muted" style="margin:10px 0 8px">Tus rutas guardadas</p><div class="chips" style="margin-bottom:14px">${routes}</div><p class="muted" style="margin-bottom:8px">O escoge los pueblos en el orden en que los vas a visitar.</p>` : `<p class="muted" style="margin-bottom:14px">Escoge los pueblos en el orden en que los vas a visitar.</p>`}
-    <div class="chips">${chips}</div></div>
+    <div class="chips">${chips}</div>${reqBlock}</div>
     <div class="plan-grid"><div>${lists || (pd.pueblos.length ? "" : `<p class="muted section">Cuando escojas un pueblo, aquí salen sus farmacias.</p>`)}</div>
     <aside class="plan-side">${pd.pueblos.length || pd.stops.length ? `<div class="panel"><h2 style="margin-bottom:4px">Orden de visita</h2>
       <p class="small muted" style="margin-bottom:10px">Las farmacias se numeran en el orden en que las tocas. Cambia el orden con las flechas.</p>
@@ -596,12 +601,14 @@ function planner(d) {
       ${pd.saveAs ? `<label class="field" style="margin-top:6px"><span>Nombre de la ruta</span><input type="text" value="${esc(pd.name)}" placeholder="${esc(defaultRouteName(pd.pueblos) || "Ruta")}" data-plan="name"></label>` : ""}</div></div>` : ""}</aside></div>
     <div class="savebar">${S.plans[d] ? `<button class="btn quiet" data-act="planCancel">Cancelar</button>` : ""}
       <button class="btn quiet" data-act="pickVisit">Visita fuera de ruta</button>
+      <button class="btn quiet" data-act="pickCall">Pedido por teléfono</button>
       <button class="btn primary" data-act="planSave" ${pd.stops.length ? "" : "disabled"}>Guardar ruta (${pd.stops.length})</button></div>`;
 }
 function prio(x) { return (x.worst === "morosa" ? 40 : x.worst === "porvencer" ? 30 : x.worst === "recoger" ? 20 : 0) + (x.toca ? 10 : 0) + Math.min(9, (x.since || 0) / 10); }
 function visitsOn(d) { return S.visits.filter(v => v.date === d); }
 function routeView(d, plan) {
-  const vis = visitsOn(d);
+  const vis = visitsOn(d).filter(v => v.channel !== "llamada");
+  const calls = visitsOn(d).filter(v => v.channel === "llamada");
   const visited = new Set(vis.map(v => v.pharmacyId));
   const stations = plan.pueblos.map(pu => {
     const stops = plan.stops.filter(id => P(id)?.p.pueblo === pu);
@@ -620,6 +627,7 @@ function routeView(d, plan) {
   });
   const extra = vis.filter(v => !plan.stops.includes(v.pharmacyId));
   if (extra.length) groups += `<div class="group-h">Fuera de ruta</div>` + [...new Set(extra.map(v => v.pharmacyId))].map(id => stopRow(id, d, vis)).join("");
+  if (calls.length) groups += `<div class="group-h">Pedidos por teléfono</div>` + calls.map(callRow).join("");
   return `<div class="panel">${stations ? `<div class="route${plan.pueblos.length > 4 ? " many" : ""}">${stations}</div>` : `<p class="muted">No planificaste una ruta para este día.</p>`}
       <div class="progress-line"><span><b class="num">${done}</b> <span class="muted">de ${plan.stops.length} visitadas</span></span>
       <span><b class="num">${money(sold)}</b> <span class="muted">vendido</span></span>
@@ -627,6 +635,7 @@ function routeView(d, plan) {
       <span class="grow"></span><button class="btn small quiet" data-act="planEdit">${plan.pueblos.length ? "Editar ruta" : "Planificar ruta"}</button></div></div>
     <div class="section"><div class="list">${groups}</div></div>
     <div class="row wrap" style="margin-top:16px;gap:10px"><button class="btn" data-act="pickVisit">${ico("mas")}Visita fuera de ruta</button>
+      <button class="btn" data-act="pickCall">${ico("tel")}Pedido por teléfono</button>
       <button class="btn quiet" data-act="nav" data-to="reporte">Ver reporte del día</button></div>`;
 }
 function stopRow(id, d, vis, n) {
@@ -638,7 +647,19 @@ function stopRow(id, d, vis, n) {
     <div class="s">${v ? esc(visitSummary(v)) : esc((x.p.contacts?.recP || x.p.contacts?.pisoP || "Sin contacto") + (x.last ? `, última compra ${ago(x.last)}` : ""))}</div></div>
     <div class="row wrap" style="justify-content:flex-end;gap:6px">${v ? `<span class="tag hecha">${ico("ok")}Visitada</span>${sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}` : phTags(x)}</div>${ico("chev", "chev")}</button>`;
 }
+function callRow(v) {
+  const x = P(v.pharmacyId); if (!x) return "";
+  const sale = v.saleId ? S.sales.find(s => s.id === v.saleId) : null;
+  return `<button class="item" data-act="openVisit" data-id="${v.id}"><span class="nb" aria-hidden="true">${ico("tel").replace("<svg", '<svg style="width:18px;height:18px"')}</span>
+    <div class="grow"><div class="t">${esc(x.p.name)} <span class="muted small" style="font-weight:400">${esc(x.p.pueblo)}</span></div><div class="s">${esc(visitSummary(v))}</div></div>
+    <div class="row wrap" style="justify-content:flex-end;gap:6px">${v.requestVisit ? `<span class="tag pide">${ico("tel")}Pidió visita</span>` : ""}${sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}</div>${ico("chev", "chev")}</button>`;
+}
 function visitSummary(v) {
+  if (v.channel === "llamada") {
+    const s = v.saleId && S.sales.find(x => x.id === v.saleId);
+    const who = (v.spoke || []).map(x => x.name).filter(Boolean);
+    return [s ? "Pedido por teléfono: " + itemsText(s.items).join(", ") : "Llamada sin pedido", who.length ? "llamó " + listJoin(who) : "", v.requestVisit ? "pidió que pases" : ""].filter(Boolean).join("; ");
+  }
   const parts = [];
   if (v.actions?.length) parts.push(v.actions.join(", "));
   const who = (v.spoke || []).map(s => s.name).filter(Boolean);
@@ -650,11 +671,13 @@ function visitSummary(v) {
    VISITA
    ========================================================= */
 let draft = null;
-function newDraft(phId, date) {
+function newDraft(phId, date, channel) {
   const x = P(phId);
-  const lv = x.lastVisit;
+  const call = channel === "llamada";
+  const lv = call ? null : x.lastVisit;
   return {
-    id: null, date: date || today(), pharmacyId: phId, actions: [], other: "", spoke: [], otherName: "", otherArea: "Recetario",
+    channel: call ? "llamada" : "visita", requestVisit: false,
+    id: null, date: date || today(), pharmacyId: phId, actions: call ? ["Venta"] : [], other: "", spoke: [], otherName: "", otherArea: "Recetario",
     inventory: {}, comp: {recetario: lv ? [...(lv.comp?.recetario || [])] : [], piso: lv ? [...(lv.comp?.piso || [])] : []}, compFrom: lv ? lv.date : null,
     items: [], term: x.p.term || "COD cheque", pending: false, saleNote: "", collect: {}, notes: "", saleId: null, dirty: false,
     mode: S.settings.saleMode || "rapida", quickTotal: "",
@@ -666,7 +689,8 @@ function draftFromVisit(v) {
   for (const s of S.sales) for (const p of (s.payments || [])) if (p.visitId === v.id) collect[s.id] = {amount: p.amount, method: p.method};
   const other = (v.spoke || []).find(s => s.role === "otro");
   return {
-    id: v.id, date: v.date, pharmacyId: v.pharmacyId, actions: [...(v.actions || [])], other: v.other || "",
+    channel: v.channel || "visita", requestVisit: !!v.requestVisit,
+    id: v.id, date: v.date, pharmacyId: v.pharmacyId, actions: v.channel === "llamada" ? ["Venta"] : [...(v.actions || [])], other: v.other || "",
     spoke: (v.spoke || []).filter(s => s.role !== "otro").map(s => s.role), otherName: other ? other.name : "", otherArea: other ? other.area : "Recetario",
     inventory: {...(v.inventory || {})}, comp: {recetario: [...(v.comp?.recetario || [])], piso: [...(v.comp?.piso || [])]}, compFrom: null,
     items: sale ? sale.items.map(i => ({...i})) : [], term: sale ? sale.term : (P(v.pharmacyId)?.p.term || "COD cheque"),
@@ -686,15 +710,16 @@ function viewVisita(arg) {
     : `<button class="chip who-chip" disabled style="opacity:.55">Sin ${role.endsWith("P") ? "principal" : "alterno"}</button>`;
   const total = r2(draft.items.reduce((a, i) => a + i.qty * i.price, 0));
   const due = isCredit(draft.term) ? addDays(draft.date, termDays(draft.term)) : null;
+  const call = draft.channel === "llamada";
 
   let h = `<div class="v-head"><div class="row" style="justify-content:space-between;align-items:flex-start">
-      <div class="grow"><h1 style="font-size:26px">${esc(p.name)}</h1><div class="muted">${esc(p.pueblo)}, ${esc(p.term || "")}${p.phone ? `, <a href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}" style="color:var(--pino)">${esc(p.phone)}</a>` : ""}</div></div>
+      <div class="grow">${call ? `<span class="tag hecha" style="margin-bottom:6px">${ico("tel")}Pedido por teléfono</span>` : ""}<h1 style="font-size:26px">${esc(p.name)}</h1><div class="muted">${esc(p.pueblo)}, ${esc(p.term || "")}${p.phone ? `, <a href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}" style="color:var(--pino)">${esc(p.phone)}</a>` : ""}</div></div>
       <button class="btn small quiet" data-act="vCancel">Cancelar</button></div>
       <div class="row wrap" style="margin-top:8px;gap:6px">${phTags(x)}${x.last ? `<span class="tag excel">Última compra ${esc(ago(x.last))}</span>` : ""}</div></div>
-    <div class="row wrap" style="gap:12px"><label class="field" style="max-width:200px"><span>Fecha de la visita</span><input type="date" value="${draft.date}" data-bind="date"></label></div>
-    <div class="v-sec"><h2>¿Qué hiciste?</h2><div class="chips">${actionChips}</div>
-      <input type="text" style="margin-top:10px" placeholder="Otra gestión (opcional)" value="${esc(draft.other)}" data-bind="other"></div>
-    <div class="v-sec"><h2>¿Con quién hablaste? <button class="link small" data-act="editContacts" data-id="${p.id}">Editar contactos</button></h2>
+    <div class="row wrap" style="gap:12px"><label class="field" style="max-width:200px"><span>${call ? "Fecha de la llamada" : "Fecha de la visita"}</span><input type="date" value="${draft.date}" data-bind="date"></label></div>
+    ${call ? "" : `<div class="v-sec"><h2>¿Qué hiciste?</h2><div class="chips">${actionChips}</div>
+      <input type="text" style="margin-top:10px" placeholder="Otra gestión (opcional)" value="${esc(draft.other)}" data-bind="other"></div>`}
+    <div class="v-sec"><h2>${call ? "¿Quién llamó?" : "¿Con quién hablaste?"} <button class="link small" data-act="editContacts" data-id="${p.id}">Editar contactos</button></h2>
       <div class="who"><div class="who-box"><h3>Recetario</h3>${whoChip("recP")}${whoChip("recA")}</div>
       <div class="who-box"><h3>Piso</h3>${whoChip("pisoP")}${whoChip("pisoA")}</div></div>
       <div class="grid2" style="margin-top:10px"><label class="field"><span>Otra persona</span><input type="text" placeholder="Nombre" value="${esc(draft.otherName)}" data-bind="otherName"></label>
@@ -704,7 +729,7 @@ function viewVisita(arg) {
   if (has("Venta") && draft.mode === "rapida") {
     const prods = S.products.filter(q => q.active);
     const picked = id => draft.items.some(i => i.pid === id);
-    h += `<div class="v-sec"><h2>Venta</h2><p class="small muted" style="margin-bottom:10px">Marca lo que vendiste y escribe el total de la orden que llenaste en el form de la compañía.</p>
+    h += `<div class="v-sec"><h2>${call ? "Pedido" : "Venta"}</h2><p class="small muted" style="margin-bottom:10px">${call ? "Marca lo que pidió y escribe el total de la orden que llenaste en el form de la compañía. Si no hubo pedido, déjalo en blanco." : "Marca lo que vendiste y escribe el total de la orden que llenaste en el form de la compañía."}</p>
       <div class="chips">${prods.map(q => `<button class="chip" aria-pressed="${picked(q.id)}" data-act="vPick" data-id="${q.id}">${esc(q.name)}</button>`).join("")}</div>
       <div class="panel" style="margin-top:14px;max-width:420px"><label class="field"><span>Total de la orden</span>
         <div class="money-in"><span aria-hidden="true">$</span><input type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${esc(draft.quickTotal)}" data-bind="quickTotal" aria-label="Total de la orden en dólares"></div></label></div>
@@ -712,7 +737,7 @@ function viewVisita(arg) {
   }
   if (has("Venta") && draft.mode !== "rapida") {
     const prods = S.products.filter(q => q.active);
-    h += `<div class="v-sec"><h2>Venta</h2>
+    h += `<div class="v-sec"><h2>${call ? "Pedido" : "Venta"}</h2>
       <div class="prod-pick">${prods.map(q => {
         const pr = q.kind === "oferta" ? q.price : (p.prices?.[q.id] ?? q.price);
         return `<button class="${q.kind}" data-act="vAdd" data-id="${q.id}"><b>${esc(q.name)}</b><span>${pr ? money(pr) : "Precio por confirmar"}${q.desc && q.kind === "oferta" ? ", " + esc(q.desc) : ""}</span></button>`;
@@ -740,11 +765,13 @@ function viewVisita(arg) {
       <div class="panel inv-grid">${S.products.filter(q => q.inv && q.active).map(q => `<div class="r"><span>${esc(q.name)}${lastInv && lastInv.inventory[q.id] != null ? ` <span class="muted small">(${lastInv.inventory[q.id]})</span>` : ""}</span>
         <div class="stepper"><button data-act="vInv" data-id="${q.id}" data-d="-1" aria-label="Menos">−</button><input type="number" inputmode="numeric" min="0" value="${draft.inventory[q.id] ?? ""}" placeholder="–" data-bind-inv="${q.id}" aria-label="Inventario de ${esc(q.name)}"><button data-act="vInv" data-id="${q.id}" data-d="1" aria-label="Más">+</button></div></div>`).join("")}</div></div>`;
   }
-  h += `<div class="v-sec"><h2>Competencia disponible</h2>${draft.compFrom ? `<p class="small muted" style="margin-bottom:8px">Marcada según la visita del ${esc(fmtD(draft.compFrom))}. Ajusta lo que cambió.</p>` : ""}
+  if (call) h += `<div class="v-sec"><h2>Visita</h2><label class="toggle"><input type="checkbox" ${draft.requestVisit ? "checked" : ""} data-bind-check="requestVisit"> Pidió que pase por la farmacia</label>
+    <p class="small muted">Cuando planifiques una ruta por ${esc(p.pueblo)}, esta farmacia sale primero con el aviso «Pidió visita».</p></div>`;
+  if (!call) h += `<div class="v-sec"><h2>Competencia disponible</h2>${draft.compFrom ? `<p class="small muted" style="margin-bottom:8px">Marcada según la visita del ${esc(fmtD(draft.compFrom))}. Ajusta lo que cambió.</p>` : ""}
     <div class="who">${["recetario", "piso"].map(area => `<div class="who-box"><h3>${area === "recetario" ? "Recetario" : "Piso"}</h3><div class="chips">${S.brands[area].map(b => `<button class="chip" aria-pressed="${draft.comp[area].includes(b)}" data-act="vComp" data-area="${area}" data-b="${esc(b)}">${esc(b)}</button>`).join("")}</div>
-      <div class="row" style="margin-top:10px"><input type="text" placeholder="Otra marca" id="newBrand-${area}" aria-label="Otra marca de ${area}"><button class="btn small" data-act="vNewBrand" data-area="${area}">Añadir</button></div></div>`).join("")}</div></div>
-    <div class="v-sec"><h2>Notas</h2><textarea placeholder="Lo que pasó en la visita, acuerdos, próximos pasos" data-bind="notes">${esc(draft.notes)}</textarea></div>
-    <div class="savebar">${draft.id ? `<button class="btn danger" data-act="vDelete">Borrar visita</button><span class="grow"></span>` : ""}<button class="btn quiet" data-act="vCancel">Cancelar</button><button class="btn primary" data-act="vSave">Guardar visita</button></div>`;
+      <div class="row" style="margin-top:10px"><input type="text" placeholder="Otra marca" id="newBrand-${area}" aria-label="Otra marca de ${area}"><button class="btn small" data-act="vNewBrand" data-area="${area}">Añadir</button></div></div>`).join("")}</div></div>`;
+  h += `<div class="v-sec"><h2>Notas</h2><textarea placeholder="${call ? "Lo que pidió, acuerdos, cuándo necesita el pedido" : "Lo que pasó en la visita, acuerdos, próximos pasos"}" data-bind="notes">${esc(draft.notes)}</textarea></div>
+    <div class="savebar">${draft.id ? `<button class="btn danger" data-act="vDelete">${call ? "Borrar pedido" : "Borrar visita"}</button><span class="grow"></span>` : ""}<button class="btn quiet" data-act="vCancel">Cancelar</button><button class="btn primary" data-act="vSave">${call ? "Guardar pedido" : "Guardar visita"}</button></div>`;
   return h;
 }
 function saleTermBlock(due) {
@@ -754,7 +781,7 @@ function saleTermBlock(due) {
     <label class="field" style="margin-top:8px"><span>Nota de la venta</span><input type="text" value="${esc(draft.saleNote)}" placeholder="Opcional" data-bind="saleNote"></label></div>`;
 }
 const itemsText = items => (items || []).map(i => i.qty ? `${i.qty} ${i.name}` : i.name);
-function startVisit(phId, date) { draft = newDraft(phId, date); go("visita/" + phId); }
+function startVisit(phId, date, channel) { draft = newDraft(phId, date, channel); go("visita/" + phId); }
 async function leaveDraft() {
   if (draft && draft.dirty && !(await confirmBox("Hay cambios sin guardar en esta visita. ¿Salir sin guardarlos?", "Salir sin guardar", true))) return false;
   draft = null; return true;
@@ -762,9 +789,11 @@ async function leaveDraft() {
 function saveVisit() {
   const d = draft; const x = P(d.pharmacyId);
   const quick = d.mode === "rapida";
-  const hasSale = d.actions.includes("Venta");
+  const call = d.channel === "llamada";
+  const hasSale = call ? (quick ? (d.items.length > 0 || parseFloat(d.quickTotal) > 0) : d.items.length > 0) : d.actions.includes("Venta");
+  if (call && !hasSale && !d.requestVisit && !d.notes.trim()) { toast("Marca lo que pidió y escribe el total de la orden"); return; }
   if (hasSale && quick) {
-    if (!d.items.length) { toast("Marca qué productos vendiste, o quita Venta"); return; }
+    if (!d.items.length) { toast(call ? "Marca qué productos pidió" : "Marca qué productos vendiste, o quita Venta"); return; }
     if (!(parseFloat(d.quickTotal) > 0)) { toast("Escribe el total de la orden"); return; }
   }
   if (hasSale && !quick && !d.items.length) { toast("Añade al menos un producto a la venta, o quita Venta"); return; }
@@ -800,12 +829,17 @@ function saveVisit() {
   const spoke = d.spoke.map(r => ({role: r, name: x.p.contacts[r] || ""}));
   if (d.otherName.trim()) spoke.push({role: "otro", area: d.otherArea, name: d.otherName.trim()});
   const inv = {}; for (const [k, v] of Object.entries(d.inventory)) if (v !== "" && v != null) inv[k] = Number(v);
-  const visit = {id: vid, date: d.date, time: new Date().toTimeString().slice(0, 5), pharmacyId: d.pharmacyId, actions: d.actions.slice(), other: d.other.trim(), spoke,
-    inventory: d.actions.includes("Verificar inventario") ? inv : {}, comp: {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice()}, saleId, notes: d.notes.trim()};
+  const visit = {id: vid, date: d.date, time: new Date().toTimeString().slice(0, 5), pharmacyId: d.pharmacyId, channel: call ? "llamada" : "visita", requestVisit: call ? !!d.requestVisit : false,
+    actions: call ? [] : d.actions.slice(), other: call ? "" : d.other.trim(), spoke,
+    inventory: !call && d.actions.includes("Verificar inventario") ? inv : {}, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice()}, saleId, notes: d.notes.trim()};
+  if (call) {
+    if (d.requestVisit) x.p.visitRequest = {date: d.date, callId: vid};
+    else if (x.p.visitRequest && x.p.visitRequest.callId === vid) delete x.p.visitRequest;
+  } else if (x.p.visitRequest && d.date >= x.p.visitRequest.date) delete x.p.visitRequest;
   const idx = S.visits.findIndex(v => v.id === vid);
   if (idx >= 0) { visit.time = S.visits[idx].time; S.visits[idx] = visit; } else S.visits.push(visit);
   changed(); draft = null; viewDate = visit.date;
-  toast("Visita guardada");
+  toast(call ? "Pedido guardado" : "Visita guardada");
   go("hoy");
 }
 
@@ -850,7 +884,7 @@ function viewFarmacia(id) {
   const lastInv = x.visits.find(v => v.inventory && Object.keys(v.inventory).length);
   return `<div class="page-head"><div><button class="link" data-act="nav" data-to="farmacias">Farmacias</button><h1>${esc(p.name)}</h1><div class="sub">${esc(p.pueblo)}, ${esc(p.term || "")}${p.phone ? `, <a href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}" style="color:var(--pino)">${esc(p.phone)}</a>` : ""}</div>
       <div class="row wrap" style="margin-top:8px;gap:6px">${phTags(x)}</div></div>
-    <div class="row"><button class="btn quiet" data-act="editPh" data-id="${p.id}">Editar</button><button class="btn primary" data-act="newVisit" data-id="${p.id}">Registrar visita</button></div></div>
+    <div class="row"><button class="btn quiet" data-act="editPh" data-id="${p.id}">Editar</button><button class="btn" data-act="newCall" data-id="${p.id}">${ico("tel")}Pedido por teléfono</button><button class="btn primary" data-act="newVisit" data-id="${p.id}">Registrar visita</button></div></div>
     <div class="grid3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       <div class="stat"><div class="v num">${money0(year)}</div><div class="l">Compras en ${today().slice(0, 4)}</div></div>
       <div class="stat"><div class="v num">${x.sales.length}</div><div class="l">Ventas registradas</div></div>
@@ -871,13 +905,14 @@ function viewFarmacia(id) {
 function saleRow(s) {
   const st = s._st || saleStatus(s);
   const desc = s.items && s.items.length ? itemsText(s.items).join(", ") + (s.note ? `. ${s.note}` : "") : (s.note || "Venta");
-  return `<div class="item bar ${st.k === "pagada" ? "" : st.k}"><div class="grow"><div class="t">${esc(cap(fmtD(s.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">${esc(s.term)}</span></div>
-    <div class="s">${esc(desc)}${s.contact ? `, con ${esc(s.contact)}` : ""}</div></div>
+  const isCall = s.visitId && S.visits.some(v => v.id === s.visitId && v.channel === "llamada");
+  return `<div class="item bar ${st.k === "pagada" ? "" : st.k}"><div class="grow"><div class="t">${esc(cap(fmtD(s.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">${esc(s.term)}</span>${isCall ? ` <span class="tag toca">${ico("tel")}Por teléfono</span>` : ""}</div>
+    <div class="s">${esc(desc)}${s.contact ? `, ${isCall ? "llamó" : "con"} ${esc(s.contact)}` : ""}</div></div>
     <div style="text-align:right"><div class="amt num">${money(s.total)}</div><div style="margin-top:4px">${st.k === "pagada" ? (s.source === "excel" ? `<span class="tag excel">Del Excel</span>` : tagFor("pagada")) : tagFor(st.k, st.label)}</div></div>
     ${s.visitId ? `<button class="btn small quiet" data-act="openVisit" data-id="${s.visitId}">Ver</button>` : ""}</div>`;
 }
 function visitRow(v) {
-  return `<button class="item" data-act="openVisit" data-id="${v.id}"><div class="grow"><div class="t">${esc(cap(fmtD(v.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">Visita sin venta</span></div><div class="s">${esc(visitSummary(v))}</div></div>${ico("chev", "chev")}</button>`;
+  return `<button class="item" data-act="openVisit" data-id="${v.id}"><div class="grow"><div class="t">${esc(cap(fmtD(v.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">${v.channel === "llamada" ? "Llamada sin pedido" : "Visita sin venta"}</span></div><div class="s">${esc(visitSummary(v))}</div></div>${ico("chev", "chev")}</button>`;
 }
 function editPharmacySheet(id) {
   const p = id ? P(id).p : {id: "", name: "", pueblo: D.pueblos[0] || "", term: "COD cheque", phone: "", contacts: {}, notes: ""};
@@ -913,13 +948,13 @@ function editContactsSheet(id) {
     <div class="row" style="justify-content:flex-end"><button class="btn primary" id="ecSave">Guardar contactos</button></div></div>`);
   $("#ecSave", o).onclick = () => { p.contacts = p.contacts || {}; for (const k of Object.keys(ROLES)) p.contacts[k] = $("#ec-" + k, o).value.trim(); changed(); closeSheet(); toast("Contactos guardados"); render(); };
 }
-function pickVisitSheet() {
+function pickVisitSheet(kind) {
   const d = viewDate || today();
-  const o = openSheet("Visita fuera de ruta", `<div class="search">${ico("buscar")}<input type="search" id="pvQ" placeholder="Buscar farmacia" autofocus></div><div class="list" id="pvList" style="margin-top:12px"></div>`);
+  const o = openSheet(kind === "llamada" ? "Pedido por teléfono: ¿qué farmacia llamó?" : "Visita fuera de ruta", `<div class="search">${ico("buscar")}<input type="search" id="pvQ" placeholder="Buscar farmacia" autofocus></div><div class="list" id="pvList" style="margin-top:12px"></div>`);
   const draw = () => {
     const q = norm($("#pvQ", o).value);
     const xs = S.pharmacies.filter(p => p.active !== false && (!q || norm(p.name + " " + p.pueblo).includes(q))).slice(0, 40);
-    $("#pvList", o).innerHTML = xs.map(p => `<button class="item" data-act="pvPick" data-id="${p.id}" data-date="${d}"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.pueblo)}</div></div>${ico("chev", "chev")}</button>`).join("") || `<div class="empty">No aparece. Añádela en Farmacias.</div>`;
+    $("#pvList", o).innerHTML = xs.map(p => `<button class="item" data-act="pvPick" data-id="${p.id}" data-date="${d}" data-kind="${kind || "visita"}"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.pueblo)}</div></div>${ico("chev", "chev")}</button>`).join("") || `<div class="empty">No aparece. Añádela en Farmacias.</div>`;
   };
   $("#pvQ", o).oninput = draw; draw();
 }
@@ -1003,7 +1038,8 @@ function viewResumen() {
   const pList = Object.entries(byP).sort((a, b) => b[1] - a[1]);
   const pMax = pList.length ? pList[0][1] : 1;
   const toca = Object.values(D.ph).filter(x => x.p.active !== false && x.freq && x.since != null && x.since >= x.freq + 7 && x.since < 120).sort((a, b) => (b.since - b.freq) - (a.since - a.freq)).slice(0, 8);
-  const visits = S.visits.filter(v => monthKey(v.date) === k).length;
+  const visits = S.visits.filter(v => monthKey(v.date) === k && v.channel !== "llamada").length;
+  const callsN = S.visits.filter(v => monthKey(v.date) === k && v.channel === "llamada").length;
   after.push(() => wireChart());
   return `${backupDays === null || backupDays >= 7 ? `<div class="banner no-print"><span class="grow">${backupDays === null ? "Todavía no has guardado un respaldo de tus datos." : `Tu último respaldo fue ${ago(S.settings.lastBackup)}.`}</span><button class="btn small" data-act="backup">Guardar respaldo</button></div>` : ""}
     <div class="page-head"><div><h1>Resumen</h1><div class="sub">${esc(cap(monthName(k)))}</div></div>
@@ -1012,7 +1048,7 @@ function viewResumen() {
       <div class="muted" style="font-weight:700">Ventas de ${esc(monthName(k).split(" ")[0])}</div>
       <div class="hero-num num">${money(total)}</div>
       <div class="meter" role="img" aria-label="${Math.round(total / c.target * 100)}% de la meta"><div class="fill" style="width:${pct * 100}%"></div><div class="goal" style="left:${goalPos * 100}%"></div></div>
-      <div class="row small muted" style="justify-content:space-between"><span>${plural(ms.length, "venta", "ventas")}, ${plural(visits, "visita", "visitas")}</span><span>Meta ${money0(c.target)}</span></div>
+      <div class="row small muted" style="justify-content:space-between"><span>${plural(ms.length, "venta", "ventas")}, ${plural(visits, "visita", "visitas")}${callsN ? `, ${plural(callsN, "pedido", "pedidos")} por teléfono` : ""}</span><span>Meta ${money0(c.target)}</span></div>
       <p style="margin-top:14px;font-size:18px">${com.reached ? `<b>Meta alcanzada.</b> Comisión estimada: <b>${money(com.amount)}</b> (${c.rate}% ${c.mode === "excedente" ? "del excedente más el fijo" : "de la venta del mes"}).`
         : `Te faltan <b>${money(left)}</b> para la meta.${wd ? ` Son ${money(left / wd)} por día en los ${plural(wd, "día laborable", "días laborables")} que quedan.` : ""} Comisión estimada: <b>${money(com.amount)}</b> (fijo). Al llegar a la meta: ${money(c.mode === "excedente" ? c.fixed : c.target * c.rate / 100)} o más.`}</p></div>
     <div class="stack"><div class="stat morosa"><div class="v num">${money(sumK("morosa"))}</div><div class="l">${tagFor("morosa", "Morosas")} ${open.filter(s => s._st.k === "morosa").length} ventas</div></div>
@@ -1064,49 +1100,73 @@ function wireChart() {
    ========================================================= */
 let repDate = null;
 function buildReport(d) {
-  const vis = visitsOn(d).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1);
+  const all = visitsOn(d).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1);
+  const vis = all.filter(v => v.channel !== "llamada");
+  const calls = all.filter(v => v.channel === "llamada");
   const seller = S.settings.seller || "";
-  const sales = vis.map(v => v.saleId && S.sales.find(s => s.id === v.saleId)).filter(Boolean);
-  const totalSold = sales.reduce((a, s) => a + s.total, 0);
+  const saleOf = v => v.saleId && S.sales.find(s => s.id === v.saleId);
+  const sales = vis.map(saleOf).filter(Boolean);
+  const callSales = calls.map(saleOf).filter(Boolean);
+  const visitSold = sales.reduce((a, s) => a + s.total, 0);
+  const callSold = callSales.reduce((a, s) => a + s.total, 0);
+  const totalSold = visitSold + callSold;
   const byTerm = {}; for (const s of sales) { const k = isCredit(s.term) ? "crédito" : s.term; byTerm[k] = (byTerm[k] || 0) + s.total; }
   const pays = []; for (const s of S.sales) for (const p of (s.payments || [])) if (p.visitId && p.date === d) pays.push({s, p});
   const totalPaid = pays.reduce((a, x) => a + Number(x.p.amount), 0);
   const pueblos = [...new Set(vis.map(v => P(v.pharmacyId)?.p.pueblo).filter(Boolean))];
   const prodAgg = {}; let allDetailed = true;
-  for (const s of sales) for (const i of s.items) { const a = prodAgg[i.name] = prodAgg[i.name] || {q: 0, t: 0, n: 0}; a.n++; if (i.qty) { a.q += i.qty; a.t += i.qty * i.price; } else allDetailed = false; }
+  for (const s of sales.concat(callSales)) for (const i of s.items) { const a = prodAgg[i.name] = prodAgg[i.name] || {q: 0, t: 0, n: 0}; a.n++; if (i.qty) { a.q += i.qty; a.t += i.qty * i.price; } else allDetailed = false; }
   const roleTxt = s => s.role === "otro" ? `${s.name} (${s.area === "Piso" ? "piso" : "recetario"})` : `${s.name} (${ROLES[s.role].toLowerCase()})`;
+  const termTxt = s => `término ${s.term}${isCredit(s.term) ? ` (cobro el ${fmtD(s.dueDate, {day: "numeric", month: "long"})})` : ""}`;
   const paras = [];
-  if (!vis.length) paras.push(`No hay visitas registradas para el ${fmtLong(d)}.`);
-  else {
+  if (!vis.length && !calls.length) paras.push(`No hay visitas ni pedidos registrados para el ${fmtLong(d)}.`);
+  if (vis.length) {
     let p1 = `El ${fmtLong(d)} visité ${plural(vis.length, "farmacia", "farmacias")} en ${listJoin(pueblos)}. `;
-    p1 += sales.length ? `Concreté ${plural(sales.length, "venta", "ventas")} por un total de ${money(totalSold)} (${Object.entries(byTerm).map(([k, v]) => `${k} ${money(v)}`).join(", ")}).` : "No hubo ventas.";
+    p1 += sales.length ? `Concreté ${plural(sales.length, "venta", "ventas")} por un total de ${money(visitSold)} (${Object.entries(byTerm).map(([k, v]) => `${k} ${money(v)}`).join(", ")}).` : "No hubo ventas en las visitas.";
     if (pays.length) p1 += ` Recogí ${plural(pays.length, "pago", "pagos")} por ${money(totalPaid)}.`;
     paras.push(p1);
     for (const v of vis) {
       const p = P(v.pharmacyId)?.p; if (!p) continue;
-      const s = v.saleId && S.sales.find(x => x.id === v.saleId);
+      const s = saleOf(v);
       let t = `${p.name} (${p.pueblo}): `;
       const bits = [];
       if (v.spoke?.length) bits.push(`hablé con ${listJoin(v.spoke.map(roleTxt))}`);
-      if (s) bits.push(`vendí ${listJoin(itemsText(s.items))} por ${money(s.total)}, término ${s.term}${isCredit(s.term) ? ` (cobro el ${fmtD(s.dueDate, {day: "numeric", month: "long"})})` : ""}`);
+      if (s) bits.push(`vendí ${listJoin(itemsText(s.items))} por ${money(s.total)}, ${termTxt(s)}`);
       const pv = pays.filter(x => x.p.visitId === v.id);
       if (pv.length) bits.push(`recogí ${money(pv.reduce((a, x) => a + Number(x.p.amount), 0))} en ${listJoin([...new Set(pv.map(x => x.p.method.toLowerCase()))])}`);
       const hasInv = v.inventory && Object.keys(v.inventory).length;
       const otherActs = (v.actions || []).filter(a => !["Venta", "Hablar con contacto", "Recoger cheque"].includes(a) && !(hasInv && a === "Verificar inventario")).map(a => a.toLowerCase());
       if (v.other) otherActs.push(v.other);
       if (otherActs.length) bits.push(`gestiones: ${otherActs.join(", ")}`);
-      if (v.inventory && Object.keys(v.inventory).length) bits.push(`inventario: ${Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ")}`);
+      if (hasInv) bits.push(`inventario: ${Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ")}`);
       if (v.comp && (v.comp.recetario.length || v.comp.piso.length)) bits.push(`competencia en recetario: ${v.comp.recetario.join(", ") || "ninguna"}; en piso: ${v.comp.piso.join(", ") || "ninguna"}`);
       t += bits.length ? cap(bits.join("; ")) + "." : "Visita registrada.";
       if (v.notes) t += ` Nota: ${v.notes}`;
       paras.push(t);
     }
   }
-  const rowsV = vis.map(v => { const p = P(v.pharmacyId)?.p; const s = v.saleId && S.sales.find(x => x.id === v.saleId); return [p?.name || "", p?.pueblo || "", (v.spoke || []).map(x => x.name).join(", "), (v.actions || []).concat(v.other ? [v.other] : []).join(", "), s ? s.total : 0, s ? s.term : ""]; });
+  if (calls.length) {
+    let pc = `${vis.length ? "Además, recibí" : `El ${fmtLong(d)} recibí`} ${plural(calls.length, "llamada", "llamadas")} de farmacias${callSales.length ? ` con ${plural(callSales.length, "pedido", "pedidos")} por ${money(callSold)}` : ""}.`;
+    if (sales.length && callSales.length) pc += ` En total vendí ${money(totalSold)}.`;
+    paras.push(pc);
+    for (const v of calls) {
+      const p = P(v.pharmacyId)?.p; if (!p) continue;
+      const s = saleOf(v);
+      const bits = [];
+      if (v.spoke?.length) bits.push(`llamó ${listJoin(v.spoke.map(roleTxt))}`);
+      if (s) bits.push(`pidió ${listJoin(itemsText(s.items))} por ${money(s.total)}, ${termTxt(s)}`);
+      if (v.requestVisit) bits.push("pidió que pase por la farmacia");
+      let t = `${p.name} (${p.pueblo}), por teléfono: ` + (bits.length ? cap(bits.join("; ")) + "." : "Llamada registrada.");
+      if (v.notes) t += ` Nota: ${v.notes}`;
+      paras.push(t);
+    }
+  }
+  const rowsV = vis.map(v => { const p = P(v.pharmacyId)?.p; const s = saleOf(v); return [p?.name || "", p?.pueblo || "", (v.spoke || []).map(x => x.name).join(", "), (v.actions || []).concat(v.other ? [v.other] : []).join(", "), s ? s.total : 0, s ? s.term : ""]; });
+  const rowsT = calls.map(v => { const p = P(v.pharmacyId)?.p; const s = saleOf(v); return [p?.name || "", p?.pueblo || "", (v.spoke || []).map(x => x.name).join(", "), s ? itemsText(s.items).join(", ") : "", s ? s.total : 0, s ? s.term : "", v.requestVisit ? "Sí" : ""]; });
   const rowsP = Object.entries(prodAgg).map(([n, a]) => allDetailed ? [n, a.q, r2(a.t)] : [n, a.n]);
   const rowsC = pays.map(x => [P(x.s.pharmacyId)?.p.name || "", fmtD(x.s.date, {day: "numeric", month: "short"}), Number(x.p.amount), x.p.method]);
   const title = `Informe diario${seller ? " de " + seller : ""}`;
-  return {d, title, subtitle: cap(fmtLong(d)), paras, rowsV, rowsP, rowsC, totalSold, totalPaid, pHead: allDetailed ? ["Producto", "Cantidad", "Total"] : ["Producto", "Farmacias"]};
+  return {d, title, subtitle: cap(fmtLong(d)), paras, rowsV, rowsT, rowsP, rowsC, totalSold, totalPaid, pHead: allDetailed ? ["Producto", "Cantidad", "Total"] : ["Producto", "Farmacias"]};
 }
 function reportHTML(R, forEmail) {
   const th = (s, r) => `<th style="text-align:${r ? "right" : "left"};border-bottom:2px solid #333;padding:6px 8px;font-size:13px">${s}</th>`;
@@ -1115,12 +1175,14 @@ function reportHTML(R, forEmail) {
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1B2422">${forEmail ? `<h2 style="margin:0">${esc(R.title)}</h2><p style="margin:2px 0 12px;color:#555">${esc(R.subtitle)}</p>` : ""}
     ${R.paras.map(p => `<p style="margin:0 0 10px">${esc(p)}</p>`).join("")}
     ${R.rowsV.length ? `<h3 style="margin:16px 0 4px">Visitas</h3>` + table(["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], R.rowsV.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5]]), [4]) : ""}
+    ${R.rowsT.length ? `<h3 style="margin:16px 0 4px">Pedidos por teléfono</h3>` + table(["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], R.rowsT.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5], r[6]]), [4]) : ""}
     ${R.rowsP.length ? `<h3 style="margin:16px 0 4px">Productos vendidos</h3>` + table(R.pHead, R.rowsP, R.pHead.length === 3 ? [1, 2] : [1]) : ""}
     ${R.rowsC.length ? `<h3 style="margin:16px 0 4px">Cobros recogidos</h3>` + table(["Farmacia", "Venta del", "Monto", "Forma"], R.rowsC, [2]) : ""}</div>`;
 }
 function reportText(R) {
   let t = `${R.title}\n${R.subtitle}\n\n${R.paras.join("\n\n")}\n`;
   if (R.rowsV.length) t += `\nVISITAS\n` + R.rowsV.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin venta"}${r[2] ? ", habló con " + r[2] : ""}`).join("\n") + "\n";
+  if (R.rowsT.length) t += `\nPEDIDOS POR TELÉFONO\n` + R.rowsT.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin pedido"}${r[2] ? ", llamó " + r[2] : ""}${r[6] ? ", pidió visita" : ""}`).join("\n") + "\n";
   if (R.rowsP.length) t += `\nPRODUCTOS VENDIDOS\n` + R.rowsP.map(r => r.length === 3 ? `- ${r[0]}: ${r[1]}, ${money(r[2])}` : `- ${r[0]}: ${plural(r[1], "farmacia", "farmacias")}`).join("\n") + "\n";
   if (R.rowsC.length) t += `\nCOBROS\n` + R.rowsC.map(r => `- ${r[0]}, venta del ${r[1]}: ${money(r[2])} (${r[3]})`).join("\n") + "\n";
   return t;
@@ -1175,6 +1237,7 @@ async function exportReportXlsx(R) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet([[R.title], [R.subtitle], [], ...R.paras.map(p => [p])], [120]), "Resumen");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], ...R.rowsV], [34, 14, 26, 36, 12, 14]), "Visitas");
+  XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], ...R.rowsT], [34, 14, 26, 36, 12, 14, 12]), "Teléfono");
   XLSX.utils.book_append_sheet(wb, sheet([R.pHead, ...R.rowsP], [26, 10, 12]), "Productos");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Venta del", "Monto", "Forma"], ...R.rowsC], [34, 12, 12, 12]), "Cobros");
   await deliverFile(wbBlob(wb), `Reporte ${R.d}.xlsx`);
@@ -1189,14 +1252,14 @@ async function exportBackup() {
     const p = P(s.pharmacyId)?.p; const st = saleStatus(s);
     sRows.push([s.date, p?.name || "", p?.pueblo || "", (s.items || []).map(i => i.qty ? `${i.qty} ${i.name} a ${money(i.price)}` : i.name).join(", "), s.total, s.term, s.dueDate, r2(s.total - st.bal), st.bal, {pagada: "Cobrada", morosa: "Morosa", porvencer: "Por vencer", aldia: "Al día", recoger: "Recoger pago"}[st.k], s.note || "", s.source === "excel" ? "Excel" : "App"]);
   }
-  const vRows = [["Fecha", "Hora", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Competencia piso", "Venta", "Notas"]];
+  const vRows = [["Fecha", "Hora", "Tipo", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Competencia piso", "Venta", "Notas"]];
   for (const v of [...S.visits].sort((a, b) => a.date < b.date ? -1 : 1)) {
     const p = P(v.pharmacyId)?.p; const s = v.saleId && S.sales.find(x => x.id === v.saleId);
-    vRows.push([v.date, v.time || "", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), Object.entries(v.inventory || {}).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", "), (v.comp?.recetario || []).join(", "), (v.comp?.piso || []).join(", "), s ? s.total : "", v.notes || ""]);
+    vRows.push([v.date, v.time || "", v.channel === "llamada" ? "Teléfono" : "Visita", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), Object.entries(v.inventory || {}).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", "), (v.comp?.recetario || []).join(", "), (v.comp?.piso || []).join(", "), s ? s.total : "", v.notes || ""]);
   }
   XLSX.utils.book_append_sheet(wb, sheet(phRows, [14, 34, 12, 16, 22, 22, 22, 22, 30, 30, 8]), "Farmacias");
   XLSX.utils.book_append_sheet(wb, sheet(sRows, [11, 34, 14, 44, 10, 12, 13, 10, 10, 12, 40, 8]), "Ventas");
-  XLSX.utils.book_append_sheet(wb, sheet(vRows, [11, 7, 34, 14, 36, 26, 30, 30, 30, 10, 40]), "Visitas");
+  XLSX.utils.book_append_sheet(wb, sheet(vRows, [11, 7, 10, 34, 14, 36, 26, 30, 30, 30, 10, 40]), "Visitas");
   XLSX.utils.book_append_sheet(wb, sheet([["Producto", "Tipo", "Precio", "Lleva inventario", "Activo"], ...S.products.map(p => [p.name, p.kind, p.price, p.inv ? "Sí" : "No", p.active ? "Sí" : "No"])], [24, 10, 10, 16, 8]), "Productos");
   const json = JSON.stringify({...S, savedAt: new Date().toISOString()});
   const chunks = [["Respaldo de Mi Ruta. No edites esta hoja: se usa para restaurar los datos.", APP_VERSION, today()]];
@@ -1314,8 +1377,16 @@ const A = {
   },
   planEdit() { const d = viewDate || today(); const p = S.plans[d] || {pueblos: [], stops: []}; planDraft = {date: d, pueblos: p.pueblos.slice(), stops: p.stops.slice(), routeId: null, saveAs: false, name: ""}; render(); },
   planCancel() { planDraft = null; render(); },
-  pickVisit() { pickVisitSheet(); },
-  pvPick(el) { closeSheet(); startVisit(el.dataset.id, el.dataset.date); },
+  pickVisit() { pickVisitSheet("visita"); },
+  pickCall() { pickVisitSheet("llamada"); },
+  pvPick(el) { closeSheet(); startVisit(el.dataset.id, el.dataset.kind === "llamada" ? today() : el.dataset.date, el.dataset.kind); },
+  newCall(el) { startVisit(el.dataset.id, today(), "llamada"); },
+  planAddReq(el) {
+    const p = P(el.dataset.id)?.p; if (!p) return; const pd = planDraft;
+    const i = pd.stops.indexOf(p.id);
+    if (i >= 0) pd.stops.splice(i, 1); else { if (!pd.pueblos.includes(p.pueblo)) pd.pueblos.push(p.pueblo); pd.stops.push(p.id); }
+    keepScroll(render);
+  },
   newVisit(el) { startVisit(el.dataset.id, el.dataset.date || viewDate || today()); },
   openVisit(el) { const v = S.visits.find(v => v.id === el.dataset.id); if (!v) return; draft = draftFromVisit(v); go("visita/" + v.id); },
   openPh(el) { go("farmacia/" + el.dataset.id); },
@@ -1351,6 +1422,7 @@ const A = {
     if (!(await confirmBox("¿Borrar esta visita? También se borra su venta y los cobros que registraste en ella.", "Borrar visita", true))) return;
     const id = draft.id; const v = S.visits.find(v => v.id === id);
     if (v && v.saleId) S.sales = S.sales.filter(s => s.id !== v.saleId);
+    const vp = v && P(v.pharmacyId)?.p; if (vp && vp.visitRequest && vp.visitRequest.callId === id) delete vp.visitRequest;
     for (const s of S.sales) s.payments = (s.payments || []).filter(p => p.visitId !== id);
     S.visits = S.visits.filter(v => v.id !== id); draft = null; changed(); toast("Visita borrada"); go("hoy");
   },

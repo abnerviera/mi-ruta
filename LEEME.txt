@@ -10,6 +10,9 @@ Qué hace
 - Venta rápida (la forma inicial): marca los productos que vendió y escribe el total de la orden que ya llenó
   en el form de la compañía. Con ese total la app lleva cobros, comisión, ranking y reporte.
   En Ajustes se puede cambiar a venta detallada (cantidad y precio de cada producto).
+- Pedido por teléfono: cuando una farmacia llama, se registra el pedido (quién llamó, productos, total de la orden
+  y término) sin contar como visita. Si la farmacia pide que pase, sale primero con el aviso "Pidió visita"
+  la próxima vez que se planifique una ruta por su pueblo. Los pedidos salen aparte en el reporte del día.
 - Cobros: créditos al día (verde), por vencer (amarillo) y morosos (rojo), y marcar lo cobrado.
 - Resumen: ventas del mes, comisión y cuánto falta para la meta, ventas por mes, ranking de farmacias,
   frecuencia de compra, ventas por pueblo y farmacias a las que les toca comprar.
