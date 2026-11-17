@@ -276,7 +276,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.5";
+const APP_VERSION = "1.6";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -427,9 +427,35 @@ async function boot() {
     document.body.insertBefore(bar, $("#main"));
   }
   renderNav(); render();
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http") && window.top === window) {
-    try { navigator.serviceWorker.register("sw.js"); } catch (e) {}
-  }
+  try { if (sessionStorage.getItem("miruta-updated")) { sessionStorage.removeItem("miruta-updated"); setTimeout(() => toast(`Mi Ruta se actualizó a la versión ${APP_VERSION}`), 500); } } catch (e) {}
+  setupUpdates();
+}
+
+/* ---------- actualizaciones automáticas ---------- */
+let updateReady = false, swReg = null, lastUpdateCheck = 0;
+async function applyUpdate() {
+  // Primero termina de guardar cualquier cambio pendiente; después recarga con la versión nueva.
+  try { await saveNow(); } catch (e) {}
+  try { sessionStorage.setItem("miruta-updated", "1"); } catch (e) {}
+  location.reload();
+}
+async function checkForUpdate() {
+  if (!swReg) return false;
+  lastUpdateCheck = Date.now();
+  try { await swReg.update(); } catch (e) { return false; }
+  return !!(swReg.installing || swReg.waiting);
+}
+async function setupUpdates() {
+  if (!("serviceWorker" in navigator) || !location.protocol.startsWith("http") || window.top !== window) return;
+  try { swReg = await navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}); } catch (e) { return; }
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) { hadController = true; return; }
+    if (draft && draft.dirty) { updateReady = true; toast("Hay una versión nueva. Se aplica cuando termines esta visita."); }
+    else applyUpdate();
+  });
+  checkForUpdate();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - lastUpdateCheck > 60000) checkForUpdate(); });
 }
 
 /* ---------- datos derivados ---------- */
@@ -488,7 +514,7 @@ function renderNav() {
 }
 function route() { const h = location.hash.replace(/^#\/?/, "") || "hoy"; const [view, ...rest] = h.split("/"); return {view, arg: decodeURIComponent(rest.join("/"))}; }
 function go(path) { if (location.hash === "#/" + path) render(); else location.hash = "/" + path; }
-window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => { if (updateReady && !draft) { applyUpdate(); return; } render(); window.scrollTo(0, 0); });
 
 function render() {
   if (!S) return;
@@ -1334,7 +1360,7 @@ function viewAjustes() {
         <div class="row wrap"><button class="btn primary" data-act="backup">Guardar respaldo</button><label class="btn quiet" style="cursor:pointer">Restaurar respaldo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label></div>
         ${storageOk ? "" : `<p class="small" style="margin-top:10px;color:var(--rojo-tinta)"><b>Aviso:</b> este navegador no permite guardar datos de forma permanente. Abre la app desde el ícono de la pantalla de inicio.</p>`}</div>
       <div class="panel"><h2 style="margin-bottom:6px">Empezar de cero</h2><p class="small muted" style="margin-bottom:12px">Borra todas las farmacias, ventas y visitas de este iPad.</p><button class="btn danger small" data-act="wipe">Borrar todos los datos</button></div>
-      <p class="small muted">Mi Ruta ${APP_VERSION}</p></div></div>`;
+      <div class="row wrap" style="gap:12px"><p class="small muted">Mi Ruta ${APP_VERSION}</p><button class="btn small quiet" data-act="checkUpdate">Buscar actualización</button></div></div></div>`;
 }
 function setPath(obj, path, val) { const ks = path.split("."); let o = obj; while (ks.length > 1) o = o[ks.shift()]; o[ks[0]] = val; }
 
@@ -1449,6 +1475,13 @@ const A = {
   repXlsx() { exportReportXlsx(buildReport(repDate || viewDate || today())).catch(() => toast("No se pudo preparar el Excel")); },
   repPrint() { window.print(); },
   backup() { exportBackup(); },
+  async checkUpdate() {
+    if (!swReg) { toast("La actualización automática funciona en la app instalada en el iPad"); return; }
+    if (!navigator.onLine) { toast("Sin internet. Intenta cuando tengas conexión."); return; }
+    toast("Buscando versión nueva…");
+    const found = await checkForUpdate();
+    toast(found ? "Bajando la versión nueva. La app se va a recargar." : `Ya tienes la versión más reciente (${APP_VERSION})`);
+  },
   addProd() { S.products.push({id: uid("p_"), name: "Producto nuevo", kind: "producto", price: 0, desc: "", inv: true, active: true}); changed(); keepScroll(render); },
   rmBrand(el) { S.brands[el.dataset.area].splice(el.dataset.i, 1); changed(); keepScroll(render); },
   addBrand(el) { const a = el.dataset.area; const v = $("#ab-" + a).value.trim(); if (v && !S.brands[a].includes(v)) { S.brands[a].push(v); changed(); } keepScroll(render); },

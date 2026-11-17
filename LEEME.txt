@@ -57,8 +57,10 @@ Después de esto funciona sin internet.
 4. Publicar cambios
 -------------------
 Sube los archivos nuevos al mismo repositorio y cambia el nombre de la versión en sw.js
-(por ejemplo, const CACHE = "miruta-v1.2"). El iPad baja la versión nueva la próxima vez que se abra con internet
-y la usa a partir de la siguiente vez que se abra.
+(por ejemplo, const CACHE = "miruta-v1.7") y en index.html (const APP_VERSION = "1.7").
+Desde la versión 1.6, cuando Marilyn abre la app con internet ya sale la versión nueva. Si la app estaba
+abierta, se recarga sola. Si está a mitad de una visita, espera a que la guarde. En Ajustes hay un
+botón "Buscar actualización" y al final se ve el número de versión.
 
 
 Supuestos que se tomaron con los datos del Excel
