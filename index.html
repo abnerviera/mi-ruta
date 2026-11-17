@@ -276,7 +276,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -679,6 +679,7 @@ function newDraft(phId, date, channel) {
     channel: call ? "llamada" : "visita", requestVisit: false,
     id: null, date: date || today(), pharmacyId: phId, actions: call ? ["Venta"] : [], other: "", spoke: [], otherName: "", otherArea: "Recetario",
     inventory: {}, comp: {recetario: lv ? [...(lv.comp?.recetario || [])] : [], piso: lv ? [...(lv.comp?.piso || [])] : []}, compFrom: lv ? lv.date : null,
+    compQty: {recetario: "", piso: ""}, compQtyLast: lv && lv.comp && lv.comp.qty ? {...lv.comp.qty} : {},
     items: [], term: x.p.term || "COD cheque", pending: false, saleNote: "", collect: {}, notes: "", saleId: null, dirty: false,
     mode: S.settings.saleMode || "rapida", quickTotal: "",
   };
@@ -693,6 +694,7 @@ function draftFromVisit(v) {
     id: v.id, date: v.date, pharmacyId: v.pharmacyId, actions: v.channel === "llamada" ? ["Venta"] : [...(v.actions || [])], other: v.other || "",
     spoke: (v.spoke || []).filter(s => s.role !== "otro").map(s => s.role), otherName: other ? other.name : "", otherArea: other ? other.area : "Recetario",
     inventory: {...(v.inventory || {})}, comp: {recetario: [...(v.comp?.recetario || [])], piso: [...(v.comp?.piso || [])]}, compFrom: null,
+    compQty: {recetario: v.comp?.qty?.recetario ?? "", piso: v.comp?.qty?.piso ?? ""}, compQtyLast: {},
     items: sale ? sale.items.map(i => ({...i})) : [], term: sale ? sale.term : (P(v.pharmacyId)?.p.term || "COD cheque"),
     pending: sale ? (!isCredit(sale.term) && saleBalance(sale) > 0) : false, saleNote: sale ? sale.note || "" : "",
     collect, notes: v.notes || "", saleId: v.saleId || null, dirty: false,
@@ -769,6 +771,7 @@ function viewVisita(arg) {
     <p class="small muted">Cuando planifiques una ruta por ${esc(p.pueblo)}, esta farmacia sale primero con el aviso «Pidió visita».</p></div>`;
   if (!call) h += `<div class="v-sec"><h2>Competencia disponible</h2>${draft.compFrom ? `<p class="small muted" style="margin-bottom:8px">Marcada según la visita del ${esc(fmtD(draft.compFrom))}. Ajusta lo que cambió.</p>` : ""}
     <div class="who">${["recetario", "piso"].map(area => `<div class="who-box"><h3>${area === "recetario" ? "Recetario" : "Piso"}</h3><div class="chips">${S.brands[area].map(b => `<button class="chip" aria-pressed="${draft.comp[area].includes(b)}" data-act="vComp" data-area="${area}" data-b="${esc(b)}">${esc(b)}</button>`).join("")}</div>
+      <label class="field" style="margin-top:14px"><span>Cantidad total en ${area}</span><input type="number" inputmode="numeric" min="0" style="max-width:220px" value="${esc(draft.compQty?.[area] ?? "")}" placeholder="${draft.compQtyLast?.[area] != null ? `Última visita: ${draft.compQtyLast[area]}` : "0"}" data-bind-compqty="${area}" aria-label="Cantidad total de la competencia en ${area}"></label>
       <div class="row" style="margin-top:10px"><input type="text" placeholder="Otra marca" id="newBrand-${area}" aria-label="Otra marca de ${area}"><button class="btn small" data-act="vNewBrand" data-area="${area}">Añadir</button></div></div>`).join("")}</div></div>`;
   h += `<div class="v-sec"><h2>Notas</h2><textarea placeholder="${call ? "Lo que pidió, acuerdos, cuándo necesita el pedido" : "Lo que pasó en la visita, acuerdos, próximos pasos"}" data-bind="notes">${esc(draft.notes)}</textarea></div>
     <div class="savebar">${draft.id ? `<button class="btn danger" data-act="vDelete">${call ? "Borrar pedido" : "Borrar visita"}</button><span class="grow"></span>` : ""}<button class="btn quiet" data-act="vCancel">Cancelar</button><button class="btn primary" data-act="vSave">${call ? "Guardar pedido" : "Guardar visita"}</button></div>`;
@@ -781,6 +784,16 @@ function saleTermBlock(due) {
     <label class="field" style="margin-top:8px"><span>Nota de la venta</span><input type="text" value="${esc(draft.saleNote)}" placeholder="Opcional" data-bind="saleNote"></label></div>`;
 }
 const itemsText = items => (items || []).map(i => i.qty ? `${i.qty} ${i.name}` : i.name);
+function compQtyOf(d) {
+  const q = {}; for (const a of ["recetario", "piso"]) { const v = d.compQty?.[a]; q[a] = v === "" || v == null || isNaN(parseInt(v)) ? null : Math.max(0, parseInt(v)); }
+  return q;
+}
+function compText(c) {
+  if (!c) return "";
+  const qn = a => c.qty && c.qty[a] != null ? c.qty[a] : null;
+  const part = a => ((c[a] || []).join(", ") || "ninguna") + (qn(a) != null ? ` (${qn(a)} en total)` : "");
+  return (c.recetario || []).length || (c.piso || []).length || qn("recetario") != null || qn("piso") != null ? `competencia en recetario: ${part("recetario")}; en piso: ${part("piso")}` : "";
+}
 function startVisit(phId, date, channel) { draft = newDraft(phId, date, channel); go("visita/" + phId); }
 async function leaveDraft() {
   if (draft && draft.dirty && !(await confirmBox("Hay cambios sin guardar en esta visita. ¿Salir sin guardarlos?", "Salir sin guardar", true))) return false;
@@ -831,7 +844,7 @@ function saveVisit() {
   const inv = {}; for (const [k, v] of Object.entries(d.inventory)) if (v !== "" && v != null) inv[k] = Number(v);
   const visit = {id: vid, date: d.date, time: new Date().toTimeString().slice(0, 5), pharmacyId: d.pharmacyId, channel: call ? "llamada" : "visita", requestVisit: call ? !!d.requestVisit : false,
     actions: call ? [] : d.actions.slice(), other: call ? "" : d.other.trim(), spoke,
-    inventory: !call && d.actions.includes("Verificar inventario") ? inv : {}, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice()}, saleId, notes: d.notes.trim()};
+    inventory: !call && d.actions.includes("Verificar inventario") ? inv : {}, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice(), qty: compQtyOf(d)}, saleId, notes: d.notes.trim()};
   if (call) {
     if (d.requestVisit) x.p.visitRequest = {date: d.date, callId: vid};
     else if (x.p.visitRequest && x.p.visitRequest.callId === vid) delete x.p.visitRequest;
@@ -897,7 +910,7 @@ function viewFarmacia(id) {
           <table class="t" style="margin-top:8px">${Object.entries(ROLES).map(([k, l]) => `<tr><td class="muted small" style="width:45%">${l}</td><td><b>${esc(c[k] || "–")}</b></td></tr>`).join("")}</table>
           ${(p.otherContacts || []).length ? `<p class="small muted" style="margin-top:10px">Otros nombres en el historial: ${esc(p.otherContacts.join(", "))}</p>` : ""}</div>
         <div class="panel"><h2 style="margin-bottom:8px">Última visita</h2>${lv ? `<p><b>${esc(cap(fmtD(lv.date, {weekday: "long", day: "numeric", month: "long"})))}</b>: ${esc(visitSummary(lv))}</p>
-          ${lv.comp && (lv.comp.recetario.length || lv.comp.piso.length) ? `<p class="small" style="margin-top:8px">Competencia en recetario: ${esc(lv.comp.recetario.join(", ") || "ninguna")}. En piso: ${esc(lv.comp.piso.join(", ") || "ninguna")}.</p>` : ""}
+          ${compText(lv.comp) ? `<p class="small" style="margin-top:8px">${esc(cap(compText(lv.comp)))}.</p>` : ""}
           ${lastInv ? `<p class="small" style="margin-top:8px">Inventario del ${esc(fmtD(lastInv.date))}: ${esc(Object.entries(lastInv.inventory).map(([k, v]) => `${product(k)?.name || k} ${v}`).join(", "))}.</p>` : ""}` : `<p class="muted">Sin visitas registradas en la app.</p>`}</div>
         ${p.prices && Object.keys(p.prices).length ? `<div class="panel"><h2 style="margin-bottom:8px">Precios acordados</h2>${Object.entries(p.prices).map(([k, v]) => `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(product(k)?.name || k)}</span><b class="num">${money(v)}</b></div>`).join("")}</div>` : ""}
         ${p.notes ? `<div class="panel"><h2 style="margin-bottom:8px">Notas</h2><p>${esc(p.notes)}</p></div>` : ""}</div></div>`;
@@ -1139,7 +1152,7 @@ function buildReport(d) {
       if (v.other) otherActs.push(v.other);
       if (otherActs.length) bits.push(`gestiones: ${otherActs.join(", ")}`);
       if (hasInv) bits.push(`inventario: ${Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ")}`);
-      if (v.comp && (v.comp.recetario.length || v.comp.piso.length)) bits.push(`competencia en recetario: ${v.comp.recetario.join(", ") || "ninguna"}; en piso: ${v.comp.piso.join(", ") || "ninguna"}`);
+      if (compText(v.comp)) bits.push(compText(v.comp));
       t += bits.length ? cap(bits.join("; ")) + "." : "Visita registrada.";
       if (v.notes) t += ` Nota: ${v.notes}`;
       paras.push(t);
@@ -1252,14 +1265,14 @@ async function exportBackup() {
     const p = P(s.pharmacyId)?.p; const st = saleStatus(s);
     sRows.push([s.date, p?.name || "", p?.pueblo || "", (s.items || []).map(i => i.qty ? `${i.qty} ${i.name} a ${money(i.price)}` : i.name).join(", "), s.total, s.term, s.dueDate, r2(s.total - st.bal), st.bal, {pagada: "Cobrada", morosa: "Morosa", porvencer: "Por vencer", aldia: "Al día", recoger: "Recoger pago"}[st.k], s.note || "", s.source === "excel" ? "Excel" : "App"]);
   }
-  const vRows = [["Fecha", "Hora", "Tipo", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Competencia piso", "Venta", "Notas"]];
+  const vRows = [["Fecha", "Hora", "Tipo", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Cantidad competencia recetario", "Competencia piso", "Cantidad competencia piso", "Venta", "Notas"]];
   for (const v of [...S.visits].sort((a, b) => a.date < b.date ? -1 : 1)) {
     const p = P(v.pharmacyId)?.p; const s = v.saleId && S.sales.find(x => x.id === v.saleId);
-    vRows.push([v.date, v.time || "", v.channel === "llamada" ? "Teléfono" : "Visita", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), Object.entries(v.inventory || {}).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", "), (v.comp?.recetario || []).join(", "), (v.comp?.piso || []).join(", "), s ? s.total : "", v.notes || ""]);
+    vRows.push([v.date, v.time || "", v.channel === "llamada" ? "Teléfono" : "Visita", p?.name || "", p?.pueblo || "", (v.actions || []).concat(v.other ? [v.other] : []).join(", "), (v.spoke || []).map(x => x.name).join(", "), Object.entries(v.inventory || {}).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", "), (v.comp?.recetario || []).join(", "), v.comp?.qty?.recetario ?? "", (v.comp?.piso || []).join(", "), v.comp?.qty?.piso ?? "", s ? s.total : "", v.notes || ""]);
   }
   XLSX.utils.book_append_sheet(wb, sheet(phRows, [14, 34, 12, 16, 22, 22, 22, 22, 30, 30, 8]), "Farmacias");
   XLSX.utils.book_append_sheet(wb, sheet(sRows, [11, 34, 14, 44, 10, 12, 13, 10, 10, 12, 40, 8]), "Ventas");
-  XLSX.utils.book_append_sheet(wb, sheet(vRows, [11, 7, 10, 34, 14, 36, 26, 30, 30, 30, 10, 40]), "Visitas");
+  XLSX.utils.book_append_sheet(wb, sheet(vRows, [11, 7, 10, 34, 14, 36, 26, 30, 30, 12, 30, 12, 10, 40]), "Visitas");
   XLSX.utils.book_append_sheet(wb, sheet([["Producto", "Tipo", "Precio", "Lleva inventario", "Activo"], ...S.products.map(p => [p.name, p.kind, p.price, p.inv ? "Sí" : "No", p.active ? "Sí" : "No"])], [24, 10, 10, 16, 8]), "Productos");
   const json = JSON.stringify({...S, savedAt: new Date().toISOString()});
   const chunks = [["Respaldo de Mi Ruta. No edites esta hoja: se usa para restaurar los datos.", APP_VERSION, today()]];
@@ -1495,6 +1508,7 @@ document.addEventListener("input", e => {
     const tt = $("#vTotal"); if (tt) tt.textContent = money(draft.items.reduce((a, i) => a + i.qty * i.price, 0));
     draft.dirty = true; return;
   }
+  if (el.dataset.bindCompqty) { draft.compQty = draft.compQty || {}; draft.compQty[el.dataset.bindCompqty] = el.value; draft.dirty = true; return; }
   if (el.dataset.bindInv) { draft.inventory[el.dataset.bindInv] = el.value === "" ? "" : Math.max(0, parseInt(el.value) || 0); draft.dirty = true; return; }
   if (el.dataset.bindCollect) { const c = draft.collect[el.dataset.id]; if (c && el.dataset.bindCollect === "amount") c.amount = r2(el.value); draft.dirty = true; }
 });
