@@ -234,6 +234,10 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
 .money-in span{font-family:var(--cond);font-size:34px;color:var(--gris)}
 .money-in input{border:0;font-family:var(--cond);font-weight:600;font-size:38px;min-height:64px;padding:4px 10px}
 .money-in input:focus{outline:none}
+.inv-picks{display:flex;flex-wrap:wrap;gap:10px}
+.inv-pick{display:inline-flex;align-items:center;gap:6px}
+.inv-pick.on{padding:3px 4px 3px 3px;border-radius:999px;background:var(--pino-claro)}
+.inv-pick .inv-q{width:96px;min-height:40px;padding:6px 10px;border-radius:999px;text-align:center}
 .inv-grid{display:grid;gap:8px 16px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
 .inv-grid .r{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0}
 .savebar{position:sticky;bottom:calc(66px + var(--safe-b));z-index:9;display:flex;gap:10px;justify-content:flex-end;padding:12px 0;margin-top:26px;background:linear-gradient(to top,var(--papel) 70%,rgba(246,248,247,0))}
@@ -276,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.7";
+const APP_VERSION = "1.8";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -721,8 +725,8 @@ function draftFromVisit(v) {
     channel: v.channel || "visita", requestVisit: !!v.requestVisit,
     id: v.id, date: v.date, pharmacyId: v.pharmacyId, actions: v.channel === "llamada" ? ["Venta"] : [...(v.actions || [])], other: v.other || "",
     spoke: (v.spoke || []).filter(s => s.role !== "otro").map(s => s.role), otherName: other ? other.name : "", otherArea: other ? other.area : "Recetario",
-    inventory: {}, invItems: v.invItems ? [...v.invItems] : Object.keys(v.inventory || {}),
-    invTotal: v.invTotal ?? (v.inventory && Object.keys(v.inventory).length ? Object.values(v.inventory).reduce((a, q) => a + (Number(q) || 0), 0) : ""), invFrom: null, invTotalLast: null,
+    inventory: {}, invItems: v.invItems && v.invItems.length ? [...v.invItems] : Object.keys(v.inventory || {}),
+    invQty: Object.fromEntries(Object.entries(invQtyMap(v)).map(([k, q]) => [k, String(q)])), invTotal: v.invTotal ?? null, invFrom: null, invQtyLast: {},
     comp: {recetario: [...(v.comp?.recetario || [])], piso: [...(v.comp?.piso || [])]}, compFrom: null,
     compQty: {recetario: v.comp?.qty?.recetario ?? "", piso: v.comp?.qty?.piso ?? ""}, compQtyLast: {},
     items: sale ? sale.items.map(i => ({...i})) : [], term: sale ? sale.term : (P(v.pharmacyId)?.p.term || "COD cheque"),
@@ -793,8 +797,9 @@ function viewVisita(arg) {
   }
   if (has("Verificar inventario")) {
     h += `<div class="v-sec"><h2>Inventario de tus productos</h2><p class="small muted" style="margin-bottom:10px">${draft.invFrom ? `Marcados según la visita del ${esc(fmtD(draft.invFrom))}. Ajusta lo que cambió.` : "Marca los productos que tiene la farmacia."}</p>
-      <div class="chips">${S.products.filter(q => q.inv && q.active).map(q => `<button class="chip" aria-pressed="${draft.invItems.includes(q.id)}" data-act="vInvPick" data-id="${q.id}">${esc(q.name)}</button>`).join("")}</div>
-      <label class="field" style="margin-top:14px;max-width:260px"><span>Cantidad total (opcional)</span><input type="number" inputmode="numeric" min="0" value="${esc(draft.invTotal ?? "")}" placeholder="${draft.invTotalLast != null ? `Última visita: ${draft.invTotalLast}` : "0"}" data-bind="invTotal" aria-label="Cantidad total de tus productos en la farmacia"></label></div>`;
+      <div class="inv-picks">${S.products.filter(q => q.inv && q.active).map(q => { const on = draft.invItems.includes(q.id); const last = draft.invQtyLast?.[q.id];
+        return `<div class="inv-pick${on ? " on" : ""}"><button class="chip" aria-pressed="${on}" data-act="vInvPick" data-id="${q.id}">${esc(q.name)}</button>${on ? `<input type="number" inputmode="numeric" min="0" class="inv-q" value="${esc(draft.invQty?.[q.id] ?? "")}" placeholder="${last != null && last !== "" ? `Antes ${esc(last)}` : "Cant."}" data-bind-invq="${q.id}" aria-label="Cantidad de ${esc(q.name)} (opcional)">` : ""}</div>`; }).join("")}</div>
+      <p class="small muted" style="margin-top:8px">La cantidad al lado de cada producto es opcional.</p></div>`;
   }
   if (call) h += `<div class="v-sec"><h2>Visita</h2><label class="toggle"><input type="checkbox" ${draft.requestVisit ? "checked" : ""} data-bind-check="requestVisit"> Pidió que pase por la farmacia</label>
     <p class="small muted">Cuando planifiques una ruta por ${esc(p.pueblo)}, esta farmacia sale primero con el aviso «Pidió visita».</p></div>`;
@@ -814,14 +819,19 @@ function saleTermBlock(due) {
 }
 const itemsText = items => (items || []).map(i => i.qty ? `${i.qty} ${i.name}` : i.name);
 function hasInvData(v) { return !!v && (((v.invItems || []).length > 0) || v.invTotal != null || (v.inventory && Object.keys(v.inventory).length > 0)); }
+function invQtyMap(v) { return v.invItems && v.invItems.length ? (v.invQty || {}) : (v.inventory || {}); }
 function invText(v) {
   if (!hasInvData(v)) return "";
-  if ((v.invItems || []).length || v.invTotal != null) return ((v.invItems || []).map(id => product(id)?.name || id).join(", ") || "sin productos marcados") + (v.invTotal != null ? ` (${v.invTotal} en total)` : "");
+  if ((v.invItems || []).length || v.invTotal != null) {
+    const q = v.invQty || {};
+    return ((v.invItems || []).map(id => (product(id)?.name || id) + (q[id] != null ? ` ${q[id]}` : "")).join(", ") || "sin productos marcados") + (v.invTotal != null ? ` (${v.invTotal} en total)` : "");
+  }
   return Object.entries(v.inventory).map(([k, q]) => `${product(k)?.name || k} ${q}`).join(", ");
 }
 function invPrefill(x) {
   const li = x.visits.find(v => v.channel !== "llamada" && hasInvData(v));
-  return {invItems: li ? (li.invItems && li.invItems.length ? [...li.invItems] : Object.keys(li.inventory || {})) : [], invTotal: "", invFrom: li ? li.date : null, invTotalLast: li && li.invTotal != null ? li.invTotal : null};
+  return {invItems: li ? (li.invItems && li.invItems.length ? [...li.invItems] : Object.keys(li.inventory || {})) : [], invQty: {}, invTotal: null,
+    invFrom: li ? li.date : null, invQtyLast: li ? {...invQtyMap(li)} : {}};
 }
 function compQtyOf(d) {
   const q = {}; for (const a of ["recetario", "piso"]) { const v = d.compQty?.[a]; q[a] = v === "" || v == null || isNaN(parseInt(v)) ? null : Math.max(0, parseInt(v)); }
@@ -881,10 +891,12 @@ function saveVisit() {
   const spoke = d.spoke.map(r => ({role: r, name: x.p.contacts[r] || ""}));
   if (d.otherName.trim()) spoke.push({role: "otro", area: d.otherArea, name: d.otherName.trim()});
   const checkedInv = !call && d.actions.includes("Verificar inventario");
-  const invTotal = d.invTotal === "" || d.invTotal == null || isNaN(parseInt(d.invTotal)) ? null : Math.max(0, parseInt(d.invTotal));
+  const invQty = {};
+  for (const id of d.invItems) { const q = d.invQty?.[id]; if (q !== "" && q != null && !isNaN(parseInt(q))) invQty[id] = Math.max(0, parseInt(q)); }
+  const invTotal = d.invTotal == null || d.invTotal === "" ? null : Number(d.invTotal);
   const visit = {id: vid, date: d.date, time: new Date().toTimeString().slice(0, 5), pharmacyId: d.pharmacyId, channel: call ? "llamada" : "visita", requestVisit: call ? !!d.requestVisit : false,
     actions: call ? [] : d.actions.slice(), other: call ? "" : d.other.trim(), spoke,
-    inventory: {}, invItems: checkedInv ? d.invItems.slice() : [], invTotal: checkedInv ? invTotal : null, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice(), qty: compQtyOf(d)}, saleId, notes: d.notes.trim()};
+    inventory: {}, invItems: checkedInv ? d.invItems.slice() : [], invQty: checkedInv ? invQty : {}, invTotal: checkedInv ? invTotal : null, comp: call ? {recetario: [], piso: []} : {recetario: d.comp.recetario.slice(), piso: d.comp.piso.slice(), qty: compQtyOf(d)}, saleId, notes: d.notes.trim()};
   if (call) {
     if (d.requestVisit) x.p.visitRequest = {date: d.date, callId: vid};
     else if (x.p.visitRequest && x.p.visitRequest.callId === vid) delete x.p.visitRequest;
@@ -1461,7 +1473,11 @@ const A = {
   vQty(el) { const it = draft.items[el.dataset.i]; it.qty = Math.max(1, (Number(it.qty) || 0) + Number(el.dataset.d)); draft.dirty = true; keepScroll(render); },
   vRm(el) { draft.items.splice(el.dataset.i, 1); draft.dirty = true; keepScroll(render); },
   vTerm(el) { draft.term = el.dataset.t; draft.dirty = true; keepScroll(render); },
-  vInvPick(el) { const a = draft.invItems; const i = a.indexOf(el.dataset.id); i >= 0 ? a.splice(i, 1) : a.push(el.dataset.id); draft.dirty = true; keepScroll(render); },
+  vInvPick(el) {
+    const id = el.dataset.id; const a = draft.invItems; const i = a.indexOf(id); draft.invQty = draft.invQty || {};
+    if (i >= 0) { a.splice(i, 1); delete draft.invQty[id]; } else a.push(id);
+    draft.dirty = true; keepScroll(render);
+  },
   vInv(el) { const k = el.dataset.id; const cur = Number(draft.inventory[k]) || 0; draft.inventory[k] = Math.max(0, cur + Number(el.dataset.d)); draft.dirty = true; keepScroll(render); },
   vComp(el) { const arr = draft.comp[el.dataset.area]; const b = el.dataset.b; const i = arr.indexOf(b); i >= 0 ? arr.splice(i, 1) : arr.push(b); draft.dirty = true; keepScroll(render); },
   vNewBrand(el) {
@@ -1556,6 +1572,7 @@ document.addEventListener("input", e => {
     const tt = $("#vTotal"); if (tt) tt.textContent = money(draft.items.reduce((a, i) => a + i.qty * i.price, 0));
     draft.dirty = true; return;
   }
+  if (el.dataset.bindInvq) { draft.invQty = draft.invQty || {}; draft.invQty[el.dataset.bindInvq] = el.value; draft.dirty = true; return; }
   if (el.dataset.bindCompqty) { draft.compQty = draft.compQty || {}; draft.compQty[el.dataset.bindCompqty] = el.value; draft.dirty = true; return; }
   if (el.dataset.bindInv) { draft.inventory[el.dataset.bindInv] = el.value === "" ? "" : Math.max(0, parseInt(el.value) || 0); draft.dirty = true; return; }
   if (el.dataset.bindCollect) { const c = draft.collect[el.dataset.id]; if (c && el.dataset.bindCollect === "amount") c.amount = r2(el.value); draft.dirty = true; }
