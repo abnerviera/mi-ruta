@@ -1,5 +1,5 @@
 // Mi Ruta: guarda la app en el iPad para que funcione sin internet y se actualice sola.
-const CACHE = "miruta-v2.1";
+const CACHE = "miruta-v2.2";
 const ASSETS = ["./", "./index.html", "./xlsx.full.min.js", "./manifest.webmanifest",
   "./fonts/public-sans-400.woff2", "./fonts/public-sans-700.woff2", "./fonts/barlow-condensed-600.woff2",
   "./icons/icon-180.png", "./icons/icon-192.png", "./icons/icon-512.png"];

@@ -280,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "2.1";
+const APP_VERSION = "2.2";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -411,6 +411,8 @@ function freshState(seed) {
 }
 function migrate(st) {
   st.settings = st.settings || {}; if (!st.settings.saleMode) st.settings.saleMode = "rapida";
+  // Versiones anteriores ponían "Marilyn" como nombre aunque la app empezara sin datos.
+  if (!(st.pharmacies || []).length && !(st.sales || []).length && st.settings.seller === "Marilyn") st.settings.seller = "";
   if (!st.chainInit) { for (const p of st.pharmacies || []) if (CHAIN_RE.test(p.name)) p.chain = true; st.chainInit = true; }
   st.routes = st.routes || []; st.stopOrder = st.stopOrder || {}; st.plans = st.plans || {}; st.visits = st.visits || [];
   st.extraPueblos = st.extraPueblos || []; st.actions = st.actions || DEFAULT_ACTIONS.slice(); st.brands = st.brands || JSON.parse(JSON.stringify(DEFAULT_BRANDS));
@@ -585,7 +587,8 @@ let planDraft = null; // {pueblos:[], stops:[]}
 function viewHoy() {
   if (!S.pharmacies.length) return `<div class="page-head"><div><h1>Te damos la bienvenida a Mi Ruta</h1><div class="sub">Tu ruta, tus visitas, ventas y cobros en un solo lugar.</div></div></div>
     <div class="stack" style="max-width:640px">
-      <div class="panel"><label class="field"><span>Tu nombre (sale en el reporte del día)</span><input type="text" value="${esc(S.settings.seller || "")}" placeholder="Nombre de la vendedora o el vendedor" data-set="seller"></label></div>
+      <div class="panel"><label class="field"><span>Tu nombre</span><input type="text" value="${esc(S.settings.seller || "")}" placeholder="Escribe tu nombre y apellido, por ejemplo: Juan Pérez" autocomplete="name" data-set="seller"></label>
+        <p class="small muted" style="margin-top:6px">Sale en el título del reporte del día que envías por email. Lo puedes cambiar después en Ajustes.</p></div>
       <div class="panel tint"><h2 style="margin-bottom:8px">¿Tienes un archivo de datos?</h2>
         <p>Si te enviaron un archivo de datos de Mi Ruta o tienes un respaldo, cárgalo y quedan tus farmacias, contactos y ventas.</p>
         <label class="btn primary" style="cursor:pointer;margin-top:14px">Cargar archivo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label></div>
@@ -1465,7 +1468,7 @@ function viewAjustes() {
         <label class="toggle"><input type="radio" name="sm" value="rapida" ${S.settings.saleMode !== "detallada" ? "checked" : ""} data-set-radio="saleMode"> Rápida: marcar los productos y escribir el total de la orden de la compañía</label>
         <label class="toggle"><input type="radio" name="sm" value="detallada" ${S.settings.saleMode === "detallada" ? "checked" : ""} data-set-radio="saleMode"> Detallada: cantidad y precio de cada producto</label></div>
       <div class="panel"><h2 style="margin-bottom:12px">Créditos</h2><label class="field"><span>Avisar en amarillo cuando falten estos días para vencer</span><input type="number" inputmode="numeric" min="0" max="15" value="${S.settings.warnDays}" data-set="warnDays"></label></div>
-      <div class="panel"><h2 style="margin-bottom:12px">Tu nombre</h2><label class="field"><span>Sale en el reporte del día</span><input type="text" value="${esc(S.settings.seller)}" data-set="seller"></label></div>
+      <div class="panel"><h2 style="margin-bottom:12px">Tu nombre</h2><label class="field"><span>Sale en el reporte del día</span><input type="text" value="${esc(S.settings.seller || "")}" placeholder="Por ejemplo: Juan Pérez" autocomplete="name" data-set="seller"></label></div>
       <div class="panel tint"><h2 style="margin-bottom:6px">Respaldo</h2>
         <p class="small" style="margin-bottom:12px">Tus datos se guardan solo en este iPad. Guarda un respaldo cada semana en Archivos o envíatelo por email: es un Excel que también sirve para restaurar todo.${S.settings.lastBackup ? ` Último respaldo: ${esc(fmtD(S.settings.lastBackup, {day: "numeric", month: "long"}))}.` : ""}</p>
         <div class="row wrap"><button class="btn primary" data-act="backup">Guardar respaldo</button><label class="btn quiet" style="cursor:pointer">Restaurar respaldo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label></div>
