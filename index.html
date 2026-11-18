@@ -280,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.9";
+const APP_VERSION = "2.0";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -411,6 +411,7 @@ function freshState(seed) {
 }
 function migrate(st) {
   st.settings = st.settings || {}; if (!st.settings.saleMode) st.settings.saleMode = "rapida";
+  if (!st.chainInit) { for (const p of st.pharmacies || []) if (CHAIN_RE.test(p.name)) p.chain = true; st.chainInit = true; }
   st.routes = st.routes || []; st.stopOrder = st.stopOrder || {}; st.plans = st.plans || {}; st.visits = st.visits || [];
   st.extraPueblos = st.extraPueblos || []; st.actions = st.actions || DEFAULT_ACTIONS.slice(); st.brands = st.brands || JSON.parse(JSON.stringify(DEFAULT_BRANDS));
   return st;
@@ -465,8 +466,14 @@ async function setupUpdates() {
 /* ---------- datos derivados ---------- */
 let D = {rev: -1};
 const P = id => D.ph[id];
+// Farmacias de cadena: sus ventas se guardan en el historial pero no cuentan para la vendedora.
+const CHAIN_RE = /\b(caridad|savia|max'?s?)\b/i;
+let CHAIN = new Set();
+const isChainSale = s => CHAIN.has(s.pharmacyId);
+const regularSales = list => list.filter(s => !isChainSale(s));
 function saleBalance(s) { return r2(s.total - (s.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0)); }
 function saleStatus(s, t = today()) {
+  if (isChainSale(s)) return {k: "pagada", bal: 0, chain: true};
   const bal = saleBalance(s);
   if (bal <= 0.005) return {k: "pagada", bal: 0};
   if (!isCredit(s.term)) return {k: "recoger", bal, label: "Recoger pago"};
@@ -478,6 +485,7 @@ function saleStatus(s, t = today()) {
 function derive() {
   if (D.rev === rev) return D;
   const t = today();
+  CHAIN = new Set(S.pharmacies.filter(p => p.chain).map(p => p.id));
   const ph = {};
   for (const p of S.pharmacies) ph[p.id] = {p, sales: [], visits: [], total: 0, last: null, freq: null, bal: 0, worst: null, dates: []};
   for (const s of S.sales) {
@@ -562,7 +570,7 @@ function tagFor(k, label) {
   return `<span class="tag ${k}">${ico(m[0])}${esc(label || m[1])}</span>`;
 }
 function phTags(x) {
-  let h = "";
+  let h = x.p.chain ? `<span class="tag excel">Cadena</span>` : "";
   if (x.bal > 0) h += tagFor(x.worst, (x.worst === "morosa" ? "Morosa " : x.worst === "porvencer" ? "Por vencer " : x.worst === "recoger" ? "Recoger " : "Debe ") + money(x.bal));
   if (x.toca) h += `<span class="tag toca">Le toca comprar</span>`;
   if (x.p.visitRequest) h += `<span class="tag pide">${ico("tel")}Pidió visita</span>`;
@@ -582,10 +590,11 @@ function viewHoy() {
       <button class="btn quiet" data-act="editPh" data-id="">Empezar sin datos</button></div></div>`;
   const d = viewDate || today();
   const plan = S.plans[d];
-  const editing = planDraft && planDraft.date === d;
+  const hasVisits = visitsOn(d).length > 0;
+  const editing = planDraft && planDraft.date === d && (planDraft.touched || (!plan && !hasVisits));
   const head = `<div class="page-head"><div><h1>${d === today() ? "Hoy" : cap(fmtD(d, {weekday: "long"}))}</h1><div class="sub">${esc(cap(fmtLong(d)))}</div></div>
     <div class="row"><label class="field" style="min-width:180px"><span>Fecha de la ruta</span><input type="date" value="${d}" data-act-change="setViewDate"></label></div></div>`;
-  if (editing || (!plan && !visitsOn(d).length)) return head + planner(d);
+  if (editing || (!plan && !hasVisits)) return head + planner(d);
   return head + routeView(d, plan || {pueblos: [], stops: []});
 }
 function pueblosOrder(pu) { return (S.stopOrder && S.stopOrder[pu]) || []; }
@@ -645,7 +654,9 @@ function routeView(d, plan) {
     return `<div class="station"><span class="stop"></span><h3>${esc(pu)}</h3><div class="muted small">${plural(stops.length, "farmacia", "farmacias")}</div>
       <div class="dots">${stops.map(id => `<span class="dot ${visited.has(id) ? "done" : ""}" title="${esc(phLabel(id))}"></span>`).join("")}</div></div>`;
   }).join("");
-  const daySales = S.sales.filter(s => s.date === d && s.source !== "excel");
+  const allDay = S.sales.filter(s => s.date === d && s.source !== "excel");
+  const daySales = regularSales(allDay);
+  const chainN = allDay.length - daySales.length;
   const sold = daySales.reduce((a, s) => a + s.total, 0);
   const collected = S.sales.flatMap(s => (s.payments || []).filter(p => p.date === d && p.visitId)).reduce((a, p) => a + Number(p.amount), 0);
   const done = plan.stops.filter(id => visited.has(id)).length;
@@ -660,7 +671,7 @@ function routeView(d, plan) {
   if (calls.length) groups += `<div class="group-h">Pedidos por teléfono</div>` + calls.map(callRow).join("");
   return `<div class="panel">${stations ? `<div class="route${plan.pueblos.length > 4 ? " many" : ""}">${stations}</div>` : `<p class="muted">No planificaste una ruta para este día.</p>`}
       <div class="progress-line"><span><b class="num">${done}</b> <span class="muted">de ${plan.stops.length} visitadas</span></span>
-      <span><b class="num">${money(sold)}</b> <span class="muted">vendido</span></span>
+      <span><b class="num">${money(sold)}</b> <span class="muted">vendido</span>${chainN ? ` <span class="small muted">(+ ${plural(chainN, "venta", "ventas")} de cadena aparte)</span>` : ""}</span>
       <span><b class="num">${money(collected)}</b> <span class="muted">cobrado</span></span>
       <span class="grow"></span><button class="btn small quiet" data-act="planEdit">${plan.pueblos.length ? "Editar ruta" : "Planificar ruta"}</button></div></div>
     <div class="section"><div class="list">${groups}</div></div>
@@ -675,14 +686,14 @@ function stopRow(id, d, vis, n) {
   return `<button class="item" data-act="${v ? "openVisit" : "newVisit"}" data-id="${v ? v.id : id}" data-date="${d}">${n ? `<span class="nb ${v ? "" : "on"}">${n}</span>` : ""}
     <div class="grow"><div class="t">${esc(x.p.name)}</div>
     <div class="s">${v ? esc(visitSummary(v)) : esc((x.p.contacts?.recP || x.p.contacts?.pisoP || "Sin contacto") + (x.last ? `, última compra ${ago(x.last)}` : ""))}</div></div>
-    <div class="row wrap" style="justify-content:flex-end;gap:6px">${v ? `<span class="tag hecha">${ico("ok")}Visitada</span>${sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}` : phTags(x)}</div>${ico("chev", "chev")}</button>`;
+    <div class="row wrap" style="justify-content:flex-end;gap:6px">${v ? `<span class="tag hecha">${ico("ok")}Visitada</span>${x.p.chain ? `<span class="tag excel">Cadena</span>` : sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}` : phTags(x)}</div>${ico("chev", "chev")}</button>`;
 }
 function callRow(v) {
   const x = P(v.pharmacyId); if (!x) return "";
   const sale = v.saleId ? S.sales.find(s => s.id === v.saleId) : null;
   return `<button class="item" data-act="openVisit" data-id="${v.id}"><span class="nb" aria-hidden="true">${ico("tel").replace("<svg", '<svg style="width:18px;height:18px"')}</span>
     <div class="grow"><div class="t">${esc(x.p.name)} <span class="muted small" style="font-weight:400">${esc(x.p.pueblo)}</span></div><div class="s">${esc(visitSummary(v))}</div></div>
-    <div class="row wrap" style="justify-content:flex-end;gap:6px">${v.requestVisit ? `<span class="tag pide">${ico("tel")}Pidió visita</span>` : ""}${sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}</div>${ico("chev", "chev")}</button>`;
+    <div class="row wrap" style="justify-content:flex-end;gap:6px">${v.requestVisit ? `<span class="tag pide">${ico("tel")}Pidió visita</span>` : ""}${x.p.chain ? `<span class="tag excel">Cadena</span>` : sale ? `<span class="amt num">${money(sale.total)}</span>` : ""}</div>${ico("chev", "chev")}</button>`;
 }
 function visitSummary(v) {
   if (v.channel === "llamada") {
@@ -713,7 +724,7 @@ function newDraft(phId, date, channel) {
     comp: {recetario: lv ? [...(lv.comp?.recetario || [])] : [], piso: lv ? [...(lv.comp?.piso || [])] : []}, compFrom: lv ? lv.date : null,
     compQty: {recetario: "", piso: ""}, compQtyLast: lv && lv.comp && lv.comp.qty ? {...lv.comp.qty} : {},
     items: [], term: x.p.term || "COD cheque", pending: false, saleNote: "", collect: {}, notes: "", saleId: null, dirty: false,
-    mode: S.settings.saleMode || "rapida", quickTotal: "",
+    mode: x.p.chain ? "rapida" : (S.settings.saleMode || "rapida"), quickTotal: "",
   };
 }
 function draftFromVisit(v) {
@@ -732,7 +743,8 @@ function draftFromVisit(v) {
     items: sale ? sale.items.map(i => ({...i})) : [], term: sale ? sale.term : (P(v.pharmacyId)?.p.term || "COD cheque"),
     pending: sale ? (!isCredit(sale.term) && saleBalance(sale) > 0) : false, saleNote: sale ? sale.note || "" : "",
     collect, notes: v.notes || "", saleId: v.saleId || null, dirty: false,
-    mode: sale ? (sale.mode || "detallada") : (S.settings.saleMode || "rapida"), quickTotal: sale && sale.mode === "rapida" ? String(sale.total) : "",
+    mode: P(v.pharmacyId)?.p.chain ? "rapida" : sale ? (sale.mode || "detallada") : (S.settings.saleMode || "rapida"),
+    quickTotal: sale && (sale.mode === "rapida" || P(v.pharmacyId)?.p.chain) && sale.total ? String(sale.total) : "",
   };
 }
 function viewVisita(arg) {
@@ -762,7 +774,17 @@ function viewVisita(arg) {
       <label class="field"><span>Área</span><select data-bind="otherArea">${["Recetario", "Piso"].map(o => `<option ${draft.otherArea === o ? "selected" : ""}>${o}</option>`).join("")}</select></label></div>
       ${(p.otherContacts || []).length ? `<p class="small muted" style="margin-top:8px">Otros nombres conocidos: ${esc(p.otherContacts.join(", "))}</p>` : ""}</div>`;
 
-  if (has("Venta") && draft.mode === "rapida") {
+  const chainPh = !!p.chain;
+  if (has("Venta") && chainPh) {
+    const prods = S.products.filter(q => q.active);
+    const picked = id => draft.items.some(i => i.pid === id);
+    h += `<div class="v-sec"><h2>${call ? "Pedido" : "Venta"} de cadena</h2><p class="small muted" style="margin-bottom:10px">Farmacia de cadena: esta venta se guarda en su historial, pero no cuenta en tus ventas ni en tu comisión. Marca los productos; el total es opcional.</p>
+      <div class="chips">${prods.map(q => `<button class="chip" aria-pressed="${picked(q.id)}" data-act="vPick" data-id="${q.id}">${esc(q.name)}</button>`).join("")}</div>
+      <div class="panel" style="margin-top:14px;max-width:420px"><label class="field"><span>Total de la orden (opcional)</span>
+        <div class="money-in"><span aria-hidden="true">$</span><input type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${esc(draft.quickTotal)}" data-bind="quickTotal" aria-label="Total de la orden en dólares, opcional"></div></label></div>
+      <label class="field" style="margin-top:12px"><span>Nota de la venta</span><input type="text" value="${esc(draft.saleNote)}" placeholder="Opcional" data-bind="saleNote"></label></div>`;
+  }
+  if (has("Venta") && !chainPh && draft.mode === "rapida") {
     const prods = S.products.filter(q => q.active);
     const picked = id => draft.items.some(i => i.pid === id);
     h += `<div class="v-sec"><h2>${call ? "Pedido" : "Venta"}</h2><p class="small muted" style="margin-bottom:10px">${call ? "Marca lo que pidió y escribe el total de la orden que llenaste en el form de la compañía. Si no hubo pedido, déjalo en blanco." : "Marca lo que vendiste y escribe el total de la orden que llenaste en el form de la compañía."}</p>
@@ -771,7 +793,7 @@ function viewVisita(arg) {
         <div class="money-in"><span aria-hidden="true">$</span><input type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${esc(draft.quickTotal)}" data-bind="quickTotal" aria-label="Total de la orden en dólares"></div></label></div>
       ${saleTermBlock(due)}</div>`;
   }
-  if (has("Venta") && draft.mode !== "rapida") {
+  if (has("Venta") && !chainPh && draft.mode !== "rapida") {
     const prods = S.products.filter(q => q.active);
     h += `<div class="v-sec"><h2>${call ? "Pedido" : "Venta"}</h2>
       <div class="prod-pick">${prods.map(q => {
@@ -850,13 +872,14 @@ async function leaveDraft() {
 }
 function saveVisit() {
   const d = draft; const x = P(d.pharmacyId);
-  const quick = d.mode === "rapida";
+  const chainPh = !!x.p.chain;
+  const quick = chainPh || d.mode === "rapida";
   const call = d.channel === "llamada";
   const hasSale = call ? (quick ? (d.items.length > 0 || parseFloat(d.quickTotal) > 0) : d.items.length > 0) : d.actions.includes("Venta");
   if (call && !hasSale && !d.requestVisit && !d.notes.trim()) { toast("Marca lo que pidió y escribe el total de la orden"); return; }
   if (hasSale && quick) {
     if (!d.items.length) { toast(call ? "Marca qué productos pidió" : "Marca qué productos vendiste, o quita Venta"); return; }
-    if (!(parseFloat(d.quickTotal) > 0)) { toast("Escribe el total de la orden"); return; }
+    if (!chainPh && !(parseFloat(d.quickTotal) > 0)) { toast("Escribe el total de la orden"); return; }
   }
   if (hasSale && !quick && !d.items.length) { toast("Añade al menos un producto a la venta, o quita Venta"); return; }
   const noPrice = hasSale && !quick && d.items.find(i => !(i.price > 0));
@@ -867,18 +890,19 @@ function saveVisit() {
   let saleId = d.saleId;
   if (hasSale) {
     const total = quick ? r2(d.quickTotal) : r2(d.items.reduce((a, i) => a + i.qty * i.price, 0));
-    const days = termDays(d.term);
+    const term = chainPh ? "Cadena" : d.term;
+    const days = chainPh ? 0 : termDays(d.term);
     let s = saleId && S.sales.find(s => s.id === saleId);
     if (!s) { s = {id: uid("s"), source: "app", payments: []}; S.sales.push(s); saleId = s.id; }
     Object.assign(s, {date: d.date, pharmacyId: d.pharmacyId, mode: quick ? "rapida" : "detallada",
-      items: d.items.map(i => quick ? {pid: i.pid, name: i.name, kind: i.kind, qty: null, price: null} : {pid: i.pid, name: i.name, kind: i.kind, qty: Number(i.qty), price: r2(i.price)}), total, term: d.term,
+      items: d.items.map(i => quick ? {pid: i.pid, name: i.name, kind: i.kind, qty: null, price: null} : {pid: i.pid, name: i.name, kind: i.kind, qty: Number(i.qty), price: r2(i.price)}), total, term, chain: chainPh,
       dueDate: days ? addDays(d.date, days) : d.date, note: d.saleNote, visitId: vid, contact: (d.spoke.map(r => x.p.contacts[r]).concat(d.otherName ? [d.otherName] : [])).filter(Boolean).join(", ")});
     s.payments = (s.payments || []).filter(p => !p.auto);
-    if (!days && !d.pending) s.payments.push({date: d.date, amount: total, method: d.term, auto: true});
+    if (!chainPh && !days && !d.pending) s.payments.push({date: d.date, amount: total, method: d.term, auto: true});
     // recordar precios de esta farmacia
     x.p.prices = x.p.prices || {};
     if (!quick) for (const i of d.items) if (i.kind !== "oferta") x.p.prices[i.pid] = r2(i.price);
-    x.p.term = d.term;
+    if (!chainPh) x.p.term = d.term;
   } else if (saleId) {
     S.sales = S.sales.filter(s => s.id !== saleId); saleId = null;
   }
@@ -915,17 +939,19 @@ let phFilter = {q: "", pueblo: "", sort: "nombre"};
 function filteredPharmacies() {
   const q = norm(phFilter.q);
   let xs = S.pharmacies.filter(p => p.active !== false).map(p => D.ph[p.id]);
-  if (phFilter.pueblo) xs = xs.filter(x => x.p.pueblo === phFilter.pueblo);
+  if (phFilter.pueblo === "__cadena") xs = xs.filter(x => x.p.chain);
+  else if (phFilter.pueblo) xs = xs.filter(x => x.p.pueblo === phFilter.pueblo);
   if (q) xs = xs.filter(x => norm([x.p.name, x.p.pueblo, ...Object.values(x.p.contacts || {}), ...(x.p.otherContacts || [])].join(" ")).includes(q));
-  const sorts = {nombre: (a, b) => a.p.pueblo.localeCompare(b.p.pueblo, "es") || a.p.name.localeCompare(b.p.name, "es"), ventas: (a, b) => b.total - a.total, ultima: (a, b) => (a.since ?? 9999) - (b.since ?? 9999), debe: (a, b) => b.bal - a.bal};
+  const sorts = {nombre: (a, b) => (b.p.chain ? 1 : 0) - (a.p.chain ? 1 : 0) || a.p.pueblo.localeCompare(b.p.pueblo, "es") || a.p.name.localeCompare(b.p.name, "es"), ventas: (a, b) => b.total - a.total, ultima: (a, b) => (a.since ?? 9999) - (b.since ?? 9999), debe: (a, b) => b.bal - a.bal};
   xs.sort(sorts[phFilter.sort]);
   return xs;
 }
 function phListHTML(xs) {
   let rows = "", lastP = null;
   for (const x of xs) {
-    if (phFilter.sort === "nombre" && x.p.pueblo !== lastP) { rows += `<div class="group-h">${esc(x.p.pueblo)}</div>`; lastP = x.p.pueblo; }
-    rows += `<button class="item" data-act="openPh" data-id="${x.p.id}"><div class="grow"><div class="t">${esc(x.p.name)}${phFilter.sort !== "nombre" ? ` <span class="muted small">${esc(x.p.pueblo)}</span>` : ""}</div>
+    const grp = x.p.chain ? "Farmacias de cadena" : x.p.pueblo;
+    if (phFilter.sort === "nombre" && grp !== lastP) { rows += `<div class="group-h">${esc(grp)}</div>`; lastP = grp; }
+    rows += `<button class="item" data-act="openPh" data-id="${x.p.id}"><div class="grow"><div class="t">${esc(x.p.name)}${phFilter.sort !== "nombre" || x.p.chain ? ` <span class="muted small">${esc(x.p.pueblo)}</span>` : ""}</div>
       <div class="s">${esc(x.p.contacts?.recP || x.p.contacts?.pisoP || "Sin contacto")}${x.last ? `, última compra ${ago(x.last)}` : ""}</div></div>
       <div class="row wrap" style="justify-content:flex-end;gap:6px">${phTags(x)}<span class="amt num small muted">${money0(x.total)}</span></div>${ico("chev", "chev")}</button>`;
   }
@@ -937,7 +963,7 @@ function viewFarmacias() {
     <button class="btn primary" data-act="editPh" data-id="">${ico("mas")}Añadir farmacia</button></div>
     <div class="grid2" style="grid-template-columns:2fr 1fr"><div class="search">${ico("buscar")}<input type="search" id="phSearch" placeholder="Buscar por farmacia, pueblo o contacto" value="${esc(phFilter.q)}" data-act-input="phSearch"></div>
     <select data-act-change="phSort" aria-label="Ordenar">${[["nombre", "Por pueblo"], ["ventas", "Más ventas"], ["ultima", "Compra más reciente"], ["debe", "Balance pendiente"]].map(([k, l]) => `<option value="${k}" ${phFilter.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-    <div class="scroll-x" style="margin:12px 0 14px"><div class="chips"><button class="chip" aria-pressed="${!phFilter.pueblo}" data-act="phPueblo" data-p="">Todos</button>${D.pueblos.map(p => `<button class="chip" aria-pressed="${phFilter.pueblo === p}" data-act="phPueblo" data-p="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
+    <div class="scroll-x" style="margin:12px 0 14px"><div class="chips"><button class="chip" aria-pressed="${!phFilter.pueblo}" data-act="phPueblo" data-p="">Todos</button>${S.pharmacies.some(p => p.chain && p.active !== false) ? `<button class="chip" aria-pressed="${phFilter.pueblo === "__cadena"}" data-act="phPueblo" data-p="__cadena">Cadena</button>` : ""}${D.pueblos.map(p => `<button class="chip" aria-pressed="${phFilter.pueblo === p}" data-act="phPueblo" data-p="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
     <div class="list" id="phList">${phListHTML(xs)}</div>`;
 }
 function viewFarmacia(id) {
@@ -948,7 +974,8 @@ function viewFarmacia(id) {
   const lv = x.lastVisit;
   const lastInv = x.visits.find(v => hasInvData(v));
   return `<div class="page-head"><div><button class="link" data-act="nav" data-to="farmacias">Farmacias</button><h1>${esc(p.name)}</h1><div class="sub">${esc(p.pueblo)}, ${esc(p.term || "")}${p.phone ? `, <a href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}" style="color:var(--pino)">${esc(p.phone)}</a>` : ""}</div>
-      <div class="row wrap" style="margin-top:8px;gap:6px">${phTags(x)}</div></div>
+      <div class="row wrap" style="margin-top:8px;gap:6px">${phTags(x)}</div>
+      ${p.chain ? `<p class="small muted" style="margin-top:8px;max-width:560px">Farmacia de cadena: sus ventas y visitas se guardan aquí, pero las ventas no cuentan en tus ventas, tu meta ni tu comisión.</p>` : ""}</div>
     <div class="row"><button class="btn quiet" data-act="editPh" data-id="${p.id}">Editar</button><button class="btn" data-act="newCall" data-id="${p.id}">${ico("tel")}Pedido por teléfono</button><button class="btn primary" data-act="newVisit" data-id="${p.id}">Registrar visita</button></div></div>
     <div class="grid3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       <div class="stat"><div class="v num">${money0(year)}</div><div class="l">Compras en ${today().slice(0, 4)}</div></div>
@@ -973,7 +1000,7 @@ function saleRow(s) {
   const isCall = s.visitId && S.visits.some(v => v.id === s.visitId && v.channel === "llamada");
   return `<div class="item bar ${st.k === "pagada" ? "" : st.k}"><div class="grow"><div class="t">${esc(cap(fmtD(s.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">${esc(s.term)}</span>${isCall ? ` <span class="tag toca">${ico("tel")}Por teléfono</span>` : ""}</div>
     <div class="s">${esc(desc)}${s.contact ? `, ${isCall ? "llamó" : "con"} ${esc(s.contact)}` : ""}</div></div>
-    <div style="text-align:right"><div class="amt num">${money(s.total)}</div><div style="margin-top:4px">${st.k === "pagada" ? (s.source === "excel" ? `<span class="tag excel">Del Excel</span>` : tagFor("pagada")) : tagFor(st.k, st.label)}</div></div>
+    <div style="text-align:right"><div class="amt num">${st.chain && !s.total ? `<span class="muted small">Sin total</span>` : money(s.total)}</div><div style="margin-top:4px">${st.chain ? `<span class="tag excel">Cadena</span>` : st.k === "pagada" ? (s.source === "excel" ? `<span class="tag excel">Del Excel</span>` : tagFor("pagada")) : tagFor(st.k, st.label)}</div></div>
     ${s.visitId ? `<button class="btn small quiet" data-act="openVisit" data-id="${s.visitId}">Ver</button>` : ""}</div>`;
 }
 function visitRow(v) {
@@ -988,15 +1015,17 @@ function editPharmacySheet(id) {
     <label class="field" id="fNewPWrap" style="display:none"><span>Nombre del pueblo</span><input type="text" id="fNewP"></label>
     <label class="field"><span>Teléfono</span><input type="tel" id="fPhone" value="${esc(p.phone || "")}"></label>
     <div class="grid2">${Object.entries(ROLES).map(([k, l]) => `<label class="field"><span>${l}</span><input type="text" id="fc-${k}" value="${esc(p.contacts?.[k] || "")}"></label>`).join("")}</div>
+    <label class="toggle"><input type="checkbox" id="fChain" ${p.chain ? "checked" : ""}> Farmacia de cadena (sus ventas no cuentan en tus ventas ni en tu comisión)</label>
     <label class="field"><span>Notas</span><textarea id="fNotes">${esc(p.notes || "")}</textarea></label>
     <div class="row" style="justify-content:space-between">${id ? `<button class="btn danger" id="fArchive">Quitar de la lista</button>` : "<span></span>"}<button class="btn primary" id="fSave">Guardar</button></div></div>`);
   $("#fPueblo", o).onchange = e => { $("#fNewPWrap", o).style.display = e.target.value === "__new" ? "block" : "none"; };
+  if (!id) $("#fName", o).oninput = e => { if (CHAIN_RE.test(e.target.value)) $("#fChain", o).checked = true; };
   $("#fSave", o).onclick = () => {
     const name = $("#fName", o).value.trim(); if (!name) { toast("Escribe el nombre de la farmacia"); return; }
     let pueblo = $("#fPueblo", o).value; if (pueblo === "__new") { pueblo = $("#fNewP", o).value.trim(); if (!pueblo) { toast("Escribe el pueblo"); return; } }
     let rec = id ? P(id).p : null;
     if (!rec) { rec = {id: uid("f"), contacts: {}, otherContacts: [], prices: {}, active: true}; S.pharmacies.push(rec); }
-    Object.assign(rec, {name, pueblo, term: $("#fTerm", o).value, phone: $("#fPhone", o).value.trim(), notes: $("#fNotes", o).value.trim()});
+    Object.assign(rec, {name, pueblo, term: $("#fTerm", o).value, phone: $("#fPhone", o).value.trim(), notes: $("#fNotes", o).value.trim(), chain: $("#fChain", o).checked});
     for (const k of Object.keys(ROLES)) rec.contacts[k] = $("#fc-" + k, o).value.trim();
     changed(); closeSheet(); toast("Farmacia guardada");
     if (!id) go("farmacia/" + rec.id); else render();
@@ -1067,7 +1096,8 @@ function paySheet(sid) {
    RESUMEN (dashboard)
    ========================================================= */
 let dashMonth = null, topPeriod = "mes";
-function monthSales(k) { return S.sales.filter(s => monthKey(s.date) === k); }
+function monthSales(k) { return S.sales.filter(s => monthKey(s.date) === k && !isChainSale(s)); }
+function monthChainSales(k) { return S.sales.filter(s => monthKey(s.date) === k && isChainSale(s)); }
 function commission(total) {
   const c = S.settings.commission;
   if (total < c.target) return {amount: c.fixed, reached: false};
@@ -1082,6 +1112,8 @@ function viewResumen() {
   const t = today(); const cur = monthKey(t);
   const k = dashMonth || cur;
   const ms = monthSales(k); const total = r2(ms.reduce((a, s) => a + s.total, 0));
+  const chainMs = monthChainSales(k);
+  const chainPh = S.pharmacies.filter(p => p.chain && p.active !== false);
   const c = S.settings.commission; const com = commission(total);
   const pct = Math.min(1, total / (c.target * 1.25));
   const goalPos = c.target / (c.target * 1.25);
@@ -1097,12 +1129,12 @@ function viewResumen() {
   const from = topPeriod === "mes" ? k + "-01" : topPeriod === "3m" ? addDays(t, -91) : t.slice(0, 4) + "-01-01";
   const to = topPeriod === "mes" ? k + "-31" : t;
   const agg = {};
-  for (const s of S.sales) if (s.date >= from && s.date <= to) { const a = agg[s.pharmacyId] = agg[s.pharmacyId] || {t: 0, n: 0}; a.t += s.total; a.n++; }
+  for (const s of S.sales) if (s.date >= from && s.date <= to && !isChainSale(s)) { const a = agg[s.pharmacyId] = agg[s.pharmacyId] || {t: 0, n: 0}; a.t += s.total; a.n++; }
   const top = Object.entries(agg).sort((a, b) => b[1].t - a[1].t).slice(0, 10);
   const byP = {}; for (const s of ms) { const pu = P(s.pharmacyId)?.p.pueblo || "Otro"; byP[pu] = (byP[pu] || 0) + s.total; }
   const pList = Object.entries(byP).sort((a, b) => b[1] - a[1]);
   const pMax = pList.length ? pList[0][1] : 1;
-  const toca = Object.values(D.ph).filter(x => x.p.active !== false && x.freq && x.since != null && x.since >= x.freq + 7 && x.since < 120).sort((a, b) => (b.since - b.freq) - (a.since - a.freq)).slice(0, 8);
+  const toca = Object.values(D.ph).filter(x => x.p.active !== false && !x.p.chain && x.freq && x.since != null && x.since >= x.freq + 7 && x.since < 120).sort((a, b) => (b.since - b.freq) - (a.since - a.freq)).slice(0, 8);
   const visits = S.visits.filter(v => monthKey(v.date) === k && v.channel !== "llamada").length;
   const callsN = S.visits.filter(v => monthKey(v.date) === k && v.channel === "llamada").length;
   after.push(() => wireChart());
@@ -1114,6 +1146,7 @@ function viewResumen() {
       <div class="hero-num num">${money(total)}</div>
       <div class="meter" role="img" aria-label="${Math.round(total / c.target * 100)}% de la meta"><div class="fill" style="width:${pct * 100}%"></div><div class="goal" style="left:${goalPos * 100}%"></div></div>
       <div class="row small muted" style="justify-content:space-between"><span>${plural(ms.length, "venta", "ventas")}, ${plural(visits, "visita", "visitas")}${callsN ? `, ${plural(callsN, "pedido", "pedidos")} por teléfono` : ""}</span><span>Meta ${money0(c.target)}</span></div>
+      ${chainMs.length ? `<p class="small muted" style="margin-top:6px">Farmacias de cadena: ${money(chainMs.reduce((a, s) => a + s.total, 0))} en ${plural(chainMs.length, "venta", "ventas")}. No cuentan para la meta ni la comisión.</p>` : ""}
       <p style="margin-top:14px;font-size:18px">${com.reached ? `<b>Meta alcanzada.</b> Comisión estimada: <b>${money(com.amount)}</b> (${c.rate}% ${c.mode === "excedente" ? "del excedente más el fijo" : "de la venta del mes"}).`
         : `Te faltan <b>${money(left)}</b> para la meta.${wd ? ` Son ${money(left / wd)} por día en los ${plural(wd, "día laborable", "días laborables")} que quedan.` : ""} Comisión estimada: <b>${money(com.amount)}</b> (fijo). Al llegar a la meta: ${money(c.mode === "excedente" ? c.fixed : c.target * c.rate / 100)} o más.`}</p></div>
     <div class="stack"><div class="stat morosa"><div class="v num">${money(sumK("morosa"))}</div><div class="l">${tagFor("morosa", "Morosas")} ${open.filter(s => s._st.k === "morosa").length} ventas</div></div>
@@ -1127,7 +1160,11 @@ function viewResumen() {
         ${top.map(([id, a], i) => { const x = P(id); return `<tr><td><button class="link" style="text-align:left;text-decoration:none;color:var(--tinta)" data-act="openPh" data-id="${id}">${i + 1}. ${esc(x?.p.name || "")}</button><div class="small muted">${esc(x?.p.pueblo || "")}</div></td><td class="r num"><b>${money(a.t)}</b></td><td class="r num">${a.n}</td><td class="r num">${x?.freq ? x.freq + " días" : "–"}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Sin ventas en este periodo.</td></tr>`}</tbody></table></div></div>
       <div class="stack"><div class="panel"><h2 style="margin-bottom:8px">Ventas por pueblo</h2>${pList.map(([pu, v]) => `<div class="hbar"><span class="small">${esc(pu)}</span><span class="track"><i style="width:${v / pMax * 100}%"></i></span><span class="small num"><b>${money0(v)}</b></span></div>`).join("") || `<p class="muted">Sin ventas este mes.</p>`}</div>
         <div class="panel"><h2 style="margin-bottom:4px">Les toca comprar</h2><p class="small muted" style="margin-bottom:8px">Llevan más de una semana pasadas de su frecuencia usual.</p>
-          ${toca.map(x => `<button class="item" style="padding:10px 0;min-height:0" data-act="openPh" data-id="${x.p.id}"><div class="grow"><div class="t">${esc(x.p.name)}</div><div class="s">${esc(x.p.pueblo)}, última compra hace ${x.since} días, suele comprar cada ${x.freq}</div></div></button>`).join("") || `<p class="muted">Ninguna por ahora.</p>`}</div></div></div>`;
+          ${toca.map(x => `<button class="item" style="padding:10px 0;min-height:0" data-act="openPh" data-id="${x.p.id}"><div class="grow"><div class="t">${esc(x.p.name)}</div><div class="s">${esc(x.p.pueblo)}, última compra hace ${x.since} días, suele comprar cada ${x.freq}</div></div></button>`).join("") || `<p class="muted">Ninguna por ahora.</p>`}</div>
+        ${chainPh.length ? `<div class="panel"><h2 style="margin-bottom:4px;font-size:17px">Farmacias de cadena</h2><p class="small muted" style="margin-bottom:8px">${esc(cap(monthName(k)))}. No cuentan en tus ventas.</p>
+          ${chainPh.map(p => { const ss = chainMs.filter(s => s.pharmacyId === p.id); const mv = S.visits.filter(v => v.pharmacyId === p.id && monthKey(v.date) === k);
+            const vv = mv.filter(v => v.channel !== "llamada").length, cc = mv.length - vv, tt = ss.reduce((a, s) => a + s.total, 0);
+            return `<button class="item" style="padding:8px 0;min-height:0" data-act="openPh" data-id="${p.id}"><div class="grow"><div class="t" style="font-size:15px">${esc(p.name)}</div><div class="s">${esc(p.pueblo)}, ${plural(vv, "visita", "visitas")}${cc ? `, ${plural(cc, "llamada", "llamadas")}` : ""}, ${plural(ss.length, "venta", "ventas")}</div></div><span class="small muted num">${tt ? money(tt) : ss.length ? "Sin total" : ""}</span></button>`; }).join("")}</div>` : ""}</div></div>`;
 }
 function monthChart(keys, sel) {
   const tot = keys.map(k => monthSales(k).reduce((a, s) => a + s.total, 0));
@@ -1170,8 +1207,10 @@ const plainText = p => String(p).replace(/[\u27e6\u27e7]/g, "");
 const marked = p => esc(p).replace(/\u27e6(.*?)\u27e7/g, '<b style="font-size:1.2em">$1</b>');
 function buildReport(d) {
   const all = visitsOn(d).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1);
-  const vis = all.filter(v => v.channel !== "llamada");
-  const calls = all.filter(v => v.channel === "llamada");
+  const isCh = v => CHAIN.has(v.pharmacyId);
+  const vis = all.filter(v => v.channel !== "llamada" && !isCh(v));
+  const calls = all.filter(v => v.channel === "llamada" && !isCh(v));
+  const chainV = all.filter(isCh);
   const seller = S.settings.seller || "";
   const saleOf = v => v.saleId && S.sales.find(s => s.id === v.saleId);
   const sales = vis.map(saleOf).filter(Boolean);
@@ -1188,7 +1227,7 @@ function buildReport(d) {
   const roleTxt = s => s.role === "otro" ? `${s.name} (${s.area === "Piso" ? "piso" : "recetario"})` : `${s.name} (${ROLES[s.role].toLowerCase()})`;
   const termTxt = s => `término ${s.term}${isCredit(s.term) ? ` (cobro el ${fmtD(s.dueDate, {day: "numeric", month: "long"})})` : ""}`;
   const paras = [];
-  if (!vis.length && !calls.length) paras.push(`No hay visitas ni pedidos registrados para el ${fmtLong(d)}.`);
+  if (!all.length) paras.push(`No hay visitas ni pedidos registrados para el ${fmtLong(d)}.`);
   if (vis.length) {
     let p1 = `El ${fmtLong(d)} visité ${plural(vis.length, "farmacia", "farmacias")} en ${listJoin(pueblos)}. `;
     p1 += sales.length ? `Concreté ${plural(sales.length, "venta", "ventas")} por un total de ${BIG(money(visitSold))} (${Object.entries(byTerm).map(([k, v]) => `${k} ${money(v)}`).join(", ")}).` : "No hubo ventas en las visitas.";
@@ -1230,12 +1269,34 @@ function buildReport(d) {
       paras.push(t);
     }
   }
+  if (chainV.length) {
+    const nv = chainV.filter(v => v.channel !== "llamada").length, nc = chainV.length - nv;
+    paras.push(`Farmacias de cadena (no cuentan en las ventas del día): ${[nv ? `visité ${plural(nv, "farmacia", "farmacias")}` : "", nc ? `recibí ${plural(nc, "llamada", "llamadas")}` : ""].filter(Boolean).join(" y ")}.`);
+    for (const v of chainV) {
+      const p = P(v.pharmacyId)?.p; if (!p) continue;
+      const s = saleOf(v);
+      const call = v.channel === "llamada";
+      const bits = [];
+      if (v.spoke?.length) bits.push(`${call ? "llamó" : "hablé con"} ${listJoin(v.spoke.map(roleTxt))}`);
+      if (s && s.items.length) bits.push(`${call ? "pidió" : "pedido de"} ${listJoin(itemsText(s.items))}`);
+      const acts = (v.actions || []).filter(a => !["Venta", "Hablar con contacto"].includes(a) && !(hasInvData(v) && a === "Verificar inventario")).map(a => a.toLowerCase());
+      if (v.other) acts.push(v.other);
+      if (acts.length) bits.push(`gestiones: ${acts.join(", ")}`);
+      if (hasInvData(v)) bits.push(`inventario: ${invText(v)}`);
+      if (compText(v.comp)) bits.push(compText(v.comp));
+      if (v.requestVisit) bits.push("pidió que pase por la farmacia");
+      let t = `${p.name} (${p.pueblo})${call ? ", por teléfono" : ""}: ` + (bits.length ? cap(bits.join("; ")) + "." : (call ? "Llamada registrada." : "Visita registrada."));
+      if (v.notes) t += ` Nota: ${v.notes}`;
+      paras.push(t);
+    }
+  }
+  const rowsK = chainV.map(v => { const p = P(v.pharmacyId)?.p; const s = saleOf(v); return [p?.name || "", p?.pueblo || "", v.channel === "llamada" ? "Teléfono" : "Visita", (v.spoke || []).map(x => x.name).join(", "), (v.actions || []).concat(v.other ? [v.other] : []).join(", "), s ? itemsText(s.items).join(", ") : ""]; });
   const rowsV = vis.map(v => { const p = P(v.pharmacyId)?.p; const s = saleOf(v); return [p?.name || "", p?.pueblo || "", (v.spoke || []).map(x => x.name).join(", "), (v.actions || []).concat(v.other ? [v.other] : []).join(", "), s ? s.total : 0, s ? s.term : ""]; });
   const rowsT = calls.map(v => { const p = P(v.pharmacyId)?.p; const s = saleOf(v); return [p?.name || "", p?.pueblo || "", (v.spoke || []).map(x => x.name).join(", "), s ? itemsText(s.items).join(", ") : "", s ? s.total : 0, s ? s.term : "", v.requestVisit ? "Sí" : ""]; });
   const rowsP = Object.entries(prodAgg).map(([n, a]) => allDetailed ? [n, a.q, r2(a.t)] : [n, a.n]);
   const rowsC = pays.map(x => [P(x.s.pharmacyId)?.p.name || "", fmtD(x.s.date, {day: "numeric", month: "short"}), Number(x.p.amount), x.p.method]);
   const title = `Informe diario${seller ? " de " + seller : ""}`;
-  return {d, title, subtitle: cap(fmtLong(d)), paras, rowsV, rowsT, rowsP, rowsC, totalSold, totalPaid, pHead: allDetailed ? ["Producto", "Cantidad", "Total"] : ["Producto", "Farmacias"]};
+  return {d, title, subtitle: cap(fmtLong(d)), paras, rowsV, rowsT, rowsK, rowsP, rowsC, totalSold, totalPaid, pHead: allDetailed ? ["Producto", "Cantidad", "Total"] : ["Producto", "Farmacias"]};
 }
 function reportHTML(R, forEmail) {
   const th = (s, r) => `<th style="text-align:${r ? "right" : "left"};border-bottom:2px solid #333;padding:6px 8px;font-size:13px">${s}</th>`;
@@ -1245,6 +1306,7 @@ function reportHTML(R, forEmail) {
     ${R.paras.map(p => `<p style="margin:0 0 10px">${marked(p)}</p>`).join("")}
     ${R.rowsV.length ? `<h3 style="margin:16px 0 4px">Visitas</h3>` + table(["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], R.rowsV.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5]]), [4]) : ""}
     ${R.rowsT.length ? `<h3 style="margin:16px 0 4px">Pedidos por teléfono</h3>` + table(["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], R.rowsT.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5], r[6]]), [4]) : ""}
+    ${R.rowsK.length ? `<h3 style="margin:16px 0 4px">Farmacias de cadena <span style="font-weight:400;font-size:13px;color:#666">(no cuentan en las ventas)</span></h3>` + table(["Farmacia", "Pueblo", "Tipo", "Habló con", "Gestiones", "Pedido"], R.rowsK, []) : ""}
     ${R.rowsP.length ? `<h3 style="margin:16px 0 4px">Productos vendidos</h3>` + table(R.pHead, R.rowsP, R.pHead.length === 3 ? [1, 2] : [1]) : ""}
     ${R.rowsC.length ? `<h3 style="margin:16px 0 4px">Cobros recogidos</h3>` + table(["Farmacia", "Venta del", "Monto", "Forma"], R.rowsC, [2]) : ""}</div>`;
 }
@@ -1252,6 +1314,7 @@ function reportText(R) {
   let t = `${R.title}\n${R.subtitle}\n\n${R.paras.map(plainText).join("\n\n")}\n`;
   if (R.rowsV.length) t += `\nVISITAS\n` + R.rowsV.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin venta"}${r[2] ? ", habló con " + r[2] : ""}`).join("\n") + "\n";
   if (R.rowsT.length) t += `\nPEDIDOS POR TELÉFONO\n` + R.rowsT.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin pedido"}${r[2] ? ", llamó " + r[2] : ""}${r[6] ? ", pidió visita" : ""}`).join("\n") + "\n";
+  if (R.rowsK.length) t += `\nFARMACIAS DE CADENA (no cuentan en las ventas)\n` + R.rowsK.map(r => `- ${r[0]} (${r[1]}), ${r[2].toLowerCase()}${r[5] ? ": " + r[5] : ""}${r[3] ? ", " + (r[2] === "Teléfono" ? "llamó " : "habló con ") + r[3] : ""}`).join("\n") + "\n";
   if (R.rowsP.length) t += `\nPRODUCTOS VENDIDOS\n` + R.rowsP.map(r => r.length === 3 ? `- ${r[0]}: ${r[1]}, ${money(r[2])}` : `- ${r[0]}: ${plural(r[1], "farmacia", "farmacias")}`).join("\n") + "\n";
   if (R.rowsC.length) t += `\nCOBROS\n` + R.rowsC.map(r => `- ${r[0]}, venta del ${r[1]}: ${money(r[2])} (${r[3]})`).join("\n") + "\n";
   return t;
@@ -1307,6 +1370,7 @@ async function exportReportXlsx(R) {
   XLSX.utils.book_append_sheet(wb, sheet([[R.title], [R.subtitle], [], ...R.paras.map(p => [plainText(p)])], [120]), "Resumen");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], ...R.rowsV], [34, 14, 26, 36, 12, 14]), "Visitas");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], ...R.rowsT], [34, 14, 26, 36, 12, 14, 12]), "Teléfono");
+  XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Tipo", "Habló con", "Gestiones", "Pedido"], ...R.rowsK], [34, 14, 10, 26, 36, 36]), "Cadena");
   XLSX.utils.book_append_sheet(wb, sheet([R.pHead, ...R.rowsP], [26, 10, 12]), "Productos");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Venta del", "Monto", "Forma"], ...R.rowsC], [34, 12, 12, 12]), "Cobros");
   await deliverFile(wbBlob(wb), `Reporte ${R.d}.xlsx`);
@@ -1314,12 +1378,12 @@ async function exportReportXlsx(R) {
 async function exportBackup() {
   try { await ensureXLSX(); } catch (e) { toast("No se pudo preparar el Excel. Revisa la conexión e intenta de nuevo."); return; }
   const wb = XLSX.utils.book_new();
-  const phRows = [["Pueblo", "Farmacia", "Término", "Teléfono", ...Object.values(ROLES), "Otros contactos", "Notas", "Activa"]];
-  for (const p of [...S.pharmacies].sort((a, b) => a.pueblo.localeCompare(b.pueblo, "es") || a.name.localeCompare(b.name, "es"))) phRows.push([p.pueblo, p.name, p.term, p.phone || "", ...Object.keys(ROLES).map(k => p.contacts?.[k] || ""), (p.otherContacts || []).join(", "), p.notes || "", p.active === false ? "No" : "Sí"]);
-  const sRows = [["Fecha", "Farmacia", "Pueblo", "Productos", "Total", "Término", "Fecha de cobro", "Cobrado", "Balance", "Estado", "Nota", "Origen"]];
+  const phRows = [["Pueblo", "Farmacia", "Término", "Teléfono", ...Object.values(ROLES), "Otros contactos", "Notas", "Activa", "Cadena"]];
+  for (const p of [...S.pharmacies].sort((a, b) => a.pueblo.localeCompare(b.pueblo, "es") || a.name.localeCompare(b.name, "es"))) phRows.push([p.pueblo, p.name, p.term, p.phone || "", ...Object.keys(ROLES).map(k => p.contacts?.[k] || ""), (p.otherContacts || []).join(", "), p.notes || "", p.active === false ? "No" : "Sí", p.chain ? "Sí" : ""]);
+  const sRows = [["Fecha", "Farmacia", "Pueblo", "Productos", "Total", "Término", "Fecha de cobro", "Cobrado", "Balance", "Estado", "Nota", "Origen", "Cadena"]];
   for (const s of [...S.sales].sort((a, b) => a.date < b.date ? -1 : 1)) {
     const p = P(s.pharmacyId)?.p; const st = saleStatus(s);
-    sRows.push([s.date, p?.name || "", p?.pueblo || "", (s.items || []).map(i => i.qty ? `${i.qty} ${i.name} a ${money(i.price)}` : i.name).join(", "), s.total, s.term, s.dueDate, r2(s.total - st.bal), st.bal, {pagada: "Cobrada", morosa: "Morosa", porvencer: "Por vencer", aldia: "Al día", recoger: "Recoger pago"}[st.k], s.note || "", s.source === "excel" ? "Excel" : "App"]);
+    sRows.push([s.date, p?.name || "", p?.pueblo || "", (s.items || []).map(i => i.qty ? `${i.qty} ${i.name} a ${money(i.price)}` : i.name).join(", "), s.total, s.term, s.dueDate, r2(s.total - st.bal), st.bal, st.chain ? "Cadena" : {pagada: "Cobrada", morosa: "Morosa", porvencer: "Por vencer", aldia: "Al día", recoger: "Recoger pago"}[st.k], s.note || "", s.source === "excel" ? "Excel" : "App", st.chain ? "Sí" : ""]);
   }
   const vRows = [["Fecha", "Hora", "Tipo", "Farmacia", "Pueblo", "Gestiones", "Habló con", "Inventario", "Competencia recetario", "Cantidad competencia recetario", "Competencia piso", "Cantidad competencia piso", "Venta", "Notas"]];
   for (const v of [...S.visits].sort((a, b) => a.date < b.date ? -1 : 1)) {
@@ -1401,14 +1465,16 @@ const A = {
   async nav(el) { if (route().view === "visita" && !(await leaveDraft())) return; go(el.dataset.to); },
   closeSheet() { closeSheet(); },
   planPueblo(el) {
+    planDraft.touched = true;
     const p = el.dataset.p, pd = planDraft; const i = pd.pueblos.indexOf(p);
     if (i >= 0) { pd.pueblos.splice(i, 1); pd.stops = pd.stops.filter(id => P(id).p.pueblo !== p); }
     else pd.pueblos.push(p);
     render();
   },
-  planToggle(el) { const s = planDraft.stops; const id = el.dataset.id; const i = s.indexOf(id); i >= 0 ? s.splice(i, 1) : s.push(id); keepScroll(render); },
-  planMove(el) { const s = planDraft.stops; const i = Number(el.dataset.i), j = i + Number(el.dataset.d); if (j < 0 || j >= s.length) return; [s[i], s[j]] = [s[j], s[i]]; keepScroll(render); },
+  planToggle(el) { planDraft.touched = true; const s = planDraft.stops; const id = el.dataset.id; const i = s.indexOf(id); i >= 0 ? s.splice(i, 1) : s.push(id); keepScroll(render); },
+  planMove(el) { planDraft.touched = true; const s = planDraft.stops; const i = Number(el.dataset.i), j = i + Number(el.dataset.d); if (j < 0 || j >= s.length) return; [s[i], s[j]] = [s[j], s[i]]; keepScroll(render); },
   planLoadRoute(el) {
+    planDraft.touched = true;
     const r = S.routes.find(r => r.id === el.dataset.id); if (!r) return;
     const stops = r.stops.filter(id => P(id) && P(id).p.active !== false);
     const pueblos = r.pueblos.filter(pu => D.pueblos.includes(pu));
@@ -1423,6 +1489,7 @@ const A = {
     changed(); keepScroll(render);
   },
   planAll(el) {
+    planDraft.touched = true;
     const ids = pueblosPharmacies(el.dataset.p).map(x => x.p.id);
     const allIn = ids.every(id => planDraft.stops.includes(id));
     planDraft.stops = allIn ? planDraft.stops.filter(id => !ids.includes(id)) : [...new Set(planDraft.stops.concat(ids))];
@@ -1444,13 +1511,14 @@ const A = {
     }
     planDraft = null; changed(); toast(msg); render();
   },
-  planEdit() { const d = viewDate || today(); const p = S.plans[d] || {pueblos: [], stops: []}; planDraft = {date: d, pueblos: p.pueblos.slice(), stops: p.stops.slice(), routeId: null, saveAs: false, name: ""}; render(); },
+  planEdit() { const d = viewDate || today(); const p = S.plans[d] || {pueblos: [], stops: []}; planDraft = {date: d, pueblos: p.pueblos.slice(), stops: p.stops.slice(), routeId: null, saveAs: false, name: "", touched: true}; render(); },
   planCancel() { planDraft = null; render(); },
   pickVisit() { pickVisitSheet("visita"); },
   pickCall() { pickVisitSheet("llamada"); },
   pvPick(el) { closeSheet(); startVisit(el.dataset.id, el.dataset.kind === "llamada" ? today() : el.dataset.date, el.dataset.kind); },
   newCall(el) { startVisit(el.dataset.id, today(), "llamada"); },
   planAddReq(el) {
+    if (planDraft) planDraft.touched = true;
     const p = P(el.dataset.id)?.p; if (!p) return; const pd = planDraft;
     const i = pd.stops.indexOf(p.id);
     if (i >= 0) pd.stops.splice(i, 1); else { if (!pd.pueblos.includes(p.pueblo)) pd.pueblos.push(p.pueblo); pd.stops.push(p.id); }

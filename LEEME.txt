@@ -14,6 +14,10 @@ Qué hace
 - Pedido por teléfono: cuando una farmacia llama, se registra el pedido (quién llamó, productos, total de la orden
   y término) sin contar como visita. Si la farmacia pide que pase, sale primero con el aviso "Pidió visita"
   la próxima vez que se planifique una ruta por su pueblo. Los pedidos salen aparte en el reporte del día.
+- Farmacias de cadena (Caridad, Savia, Maxs u otras marcadas como cadena en su ficha): se visitan y se
+  registran como las demás y guardan su historial, pero sus ventas no cuentan en las ventas del día, del mes,
+  la meta ni la comisión. La venta pide solo los productos (el total es opcional) y no entra en Cobros.
+  En el Resumen y en el reporte salen aparte.
 - Cobros: créditos al día (verde), por vencer (amarillo) y morosos (rojo), y marcar lo cobrado.
 - Resumen: ventas del mes, comisión y cuánto falta para la meta, ventas por mes, ranking de farmacias,
   frecuencia de compra, ventas por pueblo y farmacias a las que les toca comprar.
