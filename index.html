@@ -280,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.1";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -399,7 +399,7 @@ function loadScript(src) {
 function freshState(seed) {
   return {
     v: 1, created: today(),
-    settings: {seller: "Marilyn", warnDays: 5, saleMode: "rapida", commission: {target: 20000, fixed: 600, rate: 4, mode: "total"}, lastBackup: null},
+    settings: {seller: seed ? "Marilyn" : "", warnDays: 5, saleMode: "rapida", commission: {target: 20000, fixed: 600, rate: 4, mode: "total"}, lastBackup: null},
     products: JSON.parse(JSON.stringify(DEFAULT_PRODUCTS)),
     brands: JSON.parse(JSON.stringify(DEFAULT_BRANDS)),
     actions: DEFAULT_ACTIONS.slice(),
@@ -583,11 +583,15 @@ function phTags(x) {
 let viewDate = null;
 let planDraft = null; // {pueblos:[], stops:[]}
 function viewHoy() {
-  if (!S.pharmacies.length) return `<div class="page-head"><div><h1>Bienvenida a Mi Ruta</h1><div class="sub">Tu ruta, tus visitas, ventas y cobros en un solo lugar.</div></div></div>
-    <div class="panel tint" style="max-width:640px"><h2 style="margin-bottom:8px">Carga tus datos</h2>
-      <p>Abre el archivo <b>Mi Ruta datos iniciales.xlsx</b> que te enviaron. Tiene tus farmacias, contactos y ventas de febrero a noviembre.</p>
-      <div class="row wrap" style="margin-top:16px"><label class="btn primary" style="cursor:pointer">Cargar archivo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label>
-      <button class="btn quiet" data-act="editPh" data-id="">Empezar sin datos</button></div></div>`;
+  if (!S.pharmacies.length) return `<div class="page-head"><div><h1>Te damos la bienvenida a Mi Ruta</h1><div class="sub">Tu ruta, tus visitas, ventas y cobros en un solo lugar.</div></div></div>
+    <div class="stack" style="max-width:640px">
+      <div class="panel"><label class="field"><span>Tu nombre (sale en el reporte del día)</span><input type="text" value="${esc(S.settings.seller || "")}" placeholder="Nombre de la vendedora o el vendedor" data-set="seller"></label></div>
+      <div class="panel tint"><h2 style="margin-bottom:8px">¿Tienes un archivo de datos?</h2>
+        <p>Si te enviaron un archivo de datos de Mi Ruta o tienes un respaldo, cárgalo y quedan tus farmacias, contactos y ventas.</p>
+        <label class="btn primary" style="cursor:pointer;margin-top:14px">Cargar archivo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label></div>
+      <div class="panel"><h2 style="margin-bottom:8px">Empezar sin datos</h2>
+        <p>Añade tus farmacias una por una con su pueblo y sus contactos. Con "Guardar y añadir otra" puedes entrar varias seguidas del mismo pueblo.</p>
+        <button class="btn" style="margin-top:14px" data-act="editPh" data-id="">${ico("mas")}Añadir la primera farmacia</button></div></div>`;
   const d = viewDate || today();
   const plan = S.plans[d];
   const hasVisits = visitsOn(d).length > 0;
@@ -1006,30 +1010,43 @@ function saleRow(s) {
 function visitRow(v) {
   return `<button class="item" data-act="openVisit" data-id="${v.id}"><div class="grow"><div class="t">${esc(cap(fmtD(v.date, {day: "numeric", month: "short", year: "numeric"})))} <span class="muted small" style="font-weight:400">${v.channel === "llamada" ? "Llamada sin pedido" : "Visita sin venta"}</span></div><div class="s">${esc(visitSummary(v))}</div></div>${ico("chev", "chev")}</button>`;
 }
-function editPharmacySheet(id) {
-  const p = id ? P(id).p : {id: "", name: "", pueblo: D.pueblos[0] || "", term: "COD cheque", phone: "", contacts: {}, notes: ""};
+const PR_PUEBLOS = ["Adjuntas", "Aguada", "Aguadilla", "Aguas Buenas", "Aibonito", "Añasco", "Arecibo", "Arroyo", "Barceloneta", "Barranquitas", "Bayamón", "Cabo Rojo", "Caguas", "Camuy", "Canóvanas", "Carolina", "Cataño", "Cayey", "Ceiba", "Ciales", "Cidra", "Coamo", "Comerío", "Corozal", "Culebra", "Dorado", "Fajardo", "Florida", "Guánica", "Guayama", "Guayanilla", "Guaynabo", "Gurabo", "Hatillo", "Hormigueros", "Humacao", "Isabela", "Jayuya", "Juana Díaz", "Juncos", "Lajas", "Lares", "Las Marías", "Las Piedras", "Loíza", "Luquillo", "Manatí", "Maricao", "Maunabo", "Mayagüez", "Moca", "Morovis", "Naguabo", "Naranjito", "Orocovis", "Patillas", "Peñuelas", "Ponce", "Quebradillas", "Rincón", "Río Grande", "Sabana Grande", "Salinas", "San Germán", "San Juan", "San Lorenzo", "San Sebastián", "Santa Isabel", "Toa Alta", "Toa Baja", "Trujillo Alto", "Utuado", "Vega Alta", "Vega Baja", "Vieques", "Villalba", "Yabucoa", "Yauco"];
+function canonPueblo(v) {
+  const t = String(v || "").trim().replace(/\s+/g, " "); if (!t) return "";
+  const hit = [...D.pueblos, ...PR_PUEBLOS].find(p => norm(p) === norm(t));
+  return hit || t.split(" ").map((w, i) => (i && ["de", "del", "la", "las", "los", "y"].includes(w.toLowerCase())) ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1)).join(" ");
+}
+function editPharmacySheet(id, preset = {}) {
+  const p = id ? P(id).p : {id: "", name: "", pueblo: preset.pueblo || "", term: preset.term || "COD cheque", phone: "", contacts: {}, notes: ""};
+  const opts = [...D.pueblos, ...PR_PUEBLOS.filter(x => !D.pueblos.includes(x))];
   const o = openSheet(id ? "Editar farmacia" : "Añadir farmacia", `<div class="stack">
-    <label class="field"><span>Nombre</span><input type="text" id="fName" value="${esc(p.name)}" autofocus></label>
-    <div class="grid2"><label class="field"><span>Pueblo</span><select id="fPueblo">${D.pueblos.map(x => `<option ${x === p.pueblo ? "selected" : ""}>${esc(x)}</option>`).join("")}<option value="__new">Otro pueblo…</option></select></label>
+    <label class="field"><span>Nombre</span><input type="text" id="fName" value="${esc(p.name)}" autocomplete="off" autofocus></label>
+    <div class="grid2"><label class="field"><span>Pueblo</span><input type="text" id="fPueblo" list="fPueblos" value="${esc(p.pueblo)}" placeholder="Escribe el pueblo" autocomplete="off"></label>
       <label class="field"><span>Término usual</span><select id="fTerm">${TERMS.map(t => `<option ${t === p.term ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
-    <label class="field" id="fNewPWrap" style="display:none"><span>Nombre del pueblo</span><input type="text" id="fNewP"></label>
+    <datalist id="fPueblos">${opts.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
     <label class="field"><span>Teléfono</span><input type="tel" id="fPhone" value="${esc(p.phone || "")}"></label>
     <div class="grid2">${Object.entries(ROLES).map(([k, l]) => `<label class="field"><span>${l}</span><input type="text" id="fc-${k}" value="${esc(p.contacts?.[k] || "")}"></label>`).join("")}</div>
     <label class="toggle"><input type="checkbox" id="fChain" ${p.chain ? "checked" : ""}> Farmacia de cadena (sus ventas no cuentan en tus ventas ni en tu comisión)</label>
     <label class="field"><span>Notas</span><textarea id="fNotes">${esc(p.notes || "")}</textarea></label>
-    <div class="row" style="justify-content:space-between">${id ? `<button class="btn danger" id="fArchive">Quitar de la lista</button>` : "<span></span>"}<button class="btn primary" id="fSave">Guardar</button></div></div>`);
-  $("#fPueblo", o).onchange = e => { $("#fNewPWrap", o).style.display = e.target.value === "__new" ? "block" : "none"; };
+    <div class="row wrap" style="justify-content:space-between">${id ? `<button class="btn danger" id="fArchive">Quitar de la lista</button>` : "<span></span>"}
+      <div class="row wrap">${id ? "" : `<button class="btn" id="fSaveMore">Guardar y añadir otra</button>`}<button class="btn primary" id="fSave">Guardar</button></div></div></div>`);
   if (!id) $("#fName", o).oninput = e => { if (CHAIN_RE.test(e.target.value)) $("#fChain", o).checked = true; };
-  $("#fSave", o).onclick = () => {
+  $("#fPueblo", o).onblur = e => { e.target.value = canonPueblo(e.target.value); };
+  const save = more => {
     const name = $("#fName", o).value.trim(); if (!name) { toast("Escribe el nombre de la farmacia"); return; }
-    let pueblo = $("#fPueblo", o).value; if (pueblo === "__new") { pueblo = $("#fNewP", o).value.trim(); if (!pueblo) { toast("Escribe el pueblo"); return; } }
+    const pueblo = canonPueblo($("#fPueblo", o).value); if (!pueblo) { toast("Escribe el pueblo de la farmacia"); $("#fPueblo", o).focus(); return; }
     let rec = id ? P(id).p : null;
     if (!rec) { rec = {id: uid("f"), contacts: {}, otherContacts: [], prices: {}, active: true}; S.pharmacies.push(rec); }
-    Object.assign(rec, {name, pueblo, term: $("#fTerm", o).value, phone: $("#fPhone", o).value.trim(), notes: $("#fNotes", o).value.trim(), chain: $("#fChain", o).checked});
+    const term = $("#fTerm", o).value;
+    Object.assign(rec, {name, pueblo, term, phone: $("#fPhone", o).value.trim(), notes: $("#fNotes", o).value.trim(), chain: $("#fChain", o).checked});
     for (const k of Object.keys(ROLES)) rec.contacts[k] = $("#fc-" + k, o).value.trim();
-    changed(); closeSheet(); toast("Farmacia guardada");
+    changed(); closeSheet();
+    if (more) { derive(); render(); editPharmacySheet("", {pueblo, term}); toast(`${name} guardada. Añade la próxima.`); return; }
+    toast("Farmacia guardada");
     if (!id) go("farmacia/" + rec.id); else render();
   };
+  $("#fSave", o).onclick = () => save(false);
+  if (!id) $("#fSaveMore", o).onclick = () => save(true);
   if (id) $("#fArchive", o).onclick = async () => {
     if (await confirmBox(`¿Quitar ${p.name} de la lista? Su historial de ventas se queda guardado.`, "Quitar", true)) { P(id).p.active = false; changed(); go("farmacias"); toast("Farmacia quitada"); }
   };
@@ -1448,7 +1465,7 @@ function viewAjustes() {
         <label class="toggle"><input type="radio" name="sm" value="rapida" ${S.settings.saleMode !== "detallada" ? "checked" : ""} data-set-radio="saleMode"> Rápida: marcar los productos y escribir el total de la orden de la compañía</label>
         <label class="toggle"><input type="radio" name="sm" value="detallada" ${S.settings.saleMode === "detallada" ? "checked" : ""} data-set-radio="saleMode"> Detallada: cantidad y precio de cada producto</label></div>
       <div class="panel"><h2 style="margin-bottom:12px">Créditos</h2><label class="field"><span>Avisar en amarillo cuando falten estos días para vencer</span><input type="number" inputmode="numeric" min="0" max="15" value="${S.settings.warnDays}" data-set="warnDays"></label></div>
-      <div class="panel"><h2 style="margin-bottom:12px">Vendedora</h2><label class="field"><span>Nombre en el reporte</span><input type="text" value="${esc(S.settings.seller)}" data-set="seller"></label></div>
+      <div class="panel"><h2 style="margin-bottom:12px">Tu nombre</h2><label class="field"><span>Sale en el reporte del día</span><input type="text" value="${esc(S.settings.seller)}" data-set="seller"></label></div>
       <div class="panel tint"><h2 style="margin-bottom:6px">Respaldo</h2>
         <p class="small" style="margin-bottom:12px">Tus datos se guardan solo en este iPad. Guarda un respaldo cada semana en Archivos o envíatelo por email: es un Excel que también sirve para restaurar todo.${S.settings.lastBackup ? ` Último respaldo: ${esc(fmtD(S.settings.lastBackup, {day: "numeric", month: "long"}))}.` : ""}</p>
         <div class="row wrap"><button class="btn primary" data-act="backup">Guardar respaldo</button><label class="btn quiet" style="cursor:pointer">Restaurar respaldo<input type="file" accept=".xlsx" hidden data-act-change="restore"></label></div>
@@ -1527,7 +1544,7 @@ const A = {
   newVisit(el) { startVisit(el.dataset.id, el.dataset.date || viewDate || today()); },
   openVisit(el) { const v = S.visits.find(v => v.id === el.dataset.id); if (!v) return; draft = draftFromVisit(v); go("visita/" + v.id); },
   openPh(el) { go("farmacia/" + el.dataset.id); },
-  editPh(el) { editPharmacySheet(el.dataset.id); },
+  editPh(el) { editPharmacySheet(el.dataset.id, {pueblo: phFilter.pueblo && phFilter.pueblo !== "__cadena" ? phFilter.pueblo : ""}); },
   editContacts(el) { editContactsSheet(el.dataset.id); },
   vAction(el) { const a = el.dataset.a; const i = draft.actions.indexOf(a); i >= 0 ? draft.actions.splice(i, 1) : draft.actions.push(a); draft.dirty = true; keepScroll(render); },
   vSpoke(el) { const r = el.dataset.r; const i = draft.spoke.indexOf(r); i >= 0 ? draft.spoke.splice(i, 1) : draft.spoke.push(r); draft.dirty = true; keepScroll(render); },

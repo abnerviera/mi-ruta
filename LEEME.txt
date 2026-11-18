@@ -50,6 +50,17 @@ Sirve cualquier otro hosting estático con https.
 Después de esto funciona sin internet.
 
 
+2b. Otro vendedor o vendedora (sin archivo de datos)
+---------------------------------------------------
+Cada persona instala la app desde la misma dirección en su propio iPad. Los datos de cada iPad son
+separados: nadie ve los de otro.
+  a. Instala la app como en el paso 2 (Safari > Agregar a pantalla de inicio) y ábrela desde el ícono.
+  b. En la pantalla de bienvenida escribe el nombre (sale en el reporte) y toca "Añadir la primera farmacia".
+  c. El pueblo se escribe a mano; la app sugiere los 78 municipios de Puerto Rico y corrige acentos.
+     "Guardar y añadir otra" deja el mismo pueblo puesto para entrar varias farmacias seguidas.
+  d. En Ajustes revisa la meta, el fijo y el porciento de la comisión, los productos y las marcas de la competencia.
+
+
 3. Cuidar los datos
 -------------------
 - Los datos se guardan solo dentro del ícono de Mi Ruta en ese iPad. Si se borra el ícono, se borran los datos.
