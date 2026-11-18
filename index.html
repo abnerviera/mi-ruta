@@ -280,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "1.8";
+const APP_VERSION = "1.9";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -1164,6 +1164,10 @@ function wireChart() {
    REPORTE DEL DÍA
    ========================================================= */
 let repDate = null;
+// Marca para resaltar los totales del día en el reporte (negrita y un poco más grandes).
+const BIG = v => `\u27e6${v}\u27e7`;
+const plainText = p => String(p).replace(/[\u27e6\u27e7]/g, "");
+const marked = p => esc(p).replace(/\u27e6(.*?)\u27e7/g, '<b style="font-size:1.2em">$1</b>');
 function buildReport(d) {
   const all = visitsOn(d).sort((a, b) => (a.time || "") < (b.time || "") ? -1 : 1);
   const vis = all.filter(v => v.channel !== "llamada");
@@ -1187,8 +1191,8 @@ function buildReport(d) {
   if (!vis.length && !calls.length) paras.push(`No hay visitas ni pedidos registrados para el ${fmtLong(d)}.`);
   if (vis.length) {
     let p1 = `El ${fmtLong(d)} visité ${plural(vis.length, "farmacia", "farmacias")} en ${listJoin(pueblos)}. `;
-    p1 += sales.length ? `Concreté ${plural(sales.length, "venta", "ventas")} por un total de ${money(visitSold)} (${Object.entries(byTerm).map(([k, v]) => `${k} ${money(v)}`).join(", ")}).` : "No hubo ventas en las visitas.";
-    if (pays.length) p1 += ` Recogí ${plural(pays.length, "pago", "pagos")} por ${money(totalPaid)}.`;
+    p1 += sales.length ? `Concreté ${plural(sales.length, "venta", "ventas")} por un total de ${BIG(money(visitSold))} (${Object.entries(byTerm).map(([k, v]) => `${k} ${money(v)}`).join(", ")}).` : "No hubo ventas en las visitas.";
+    if (pays.length) p1 += ` Recogí ${plural(pays.length, "pago", "pagos")} por ${BIG(money(totalPaid))}.`;
     paras.push(p1);
     for (const v of vis) {
       const p = P(v.pharmacyId)?.p; if (!p) continue;
@@ -1211,8 +1215,8 @@ function buildReport(d) {
     }
   }
   if (calls.length) {
-    let pc = `${vis.length ? "Además, recibí" : `El ${fmtLong(d)} recibí`} ${plural(calls.length, "llamada", "llamadas")} de farmacias${callSales.length ? ` con ${plural(callSales.length, "pedido", "pedidos")} por ${money(callSold)}` : ""}.`;
-    if (sales.length && callSales.length) pc += ` En total vendí ${money(totalSold)}.`;
+    let pc = `${vis.length ? "Además, recibí" : `El ${fmtLong(d)} recibí`} ${plural(calls.length, "llamada", "llamadas")} de farmacias${callSales.length ? ` con ${plural(callSales.length, "pedido", "pedidos")} por ${BIG(money(callSold))}` : ""}.`;
+    if (sales.length && callSales.length) pc += ` En total vendí ${BIG(money(totalSold))}.`;
     paras.push(pc);
     for (const v of calls) {
       const p = P(v.pharmacyId)?.p; if (!p) continue;
@@ -1238,14 +1242,14 @@ function reportHTML(R, forEmail) {
   const td = (s, r) => `<td style="border-bottom:1px solid #ccc;padding:6px 8px;${r ? "text-align:right" : ""}">${s}</td>`;
   const table = (head, rows, rightCols) => !rows.length ? "" : `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:6px 0 14px"><thead><tr>${head.map((h, i) => th(h, rightCols.includes(i))).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map((c, i) => td(typeof c === "number" && rightCols.includes(i) ? (["Cantidad", "Farmacias"].includes(head[i]) ? c : money(c)) : esc(c), rightCols.includes(i))).join("")}</tr>`).join("")}</tbody></table>`;
   return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1B2422">${forEmail ? `<h2 style="margin:0">${esc(R.title)}</h2><p style="margin:2px 0 12px;color:#555">${esc(R.subtitle)}</p>` : ""}
-    ${R.paras.map(p => `<p style="margin:0 0 10px">${esc(p)}</p>`).join("")}
+    ${R.paras.map(p => `<p style="margin:0 0 10px">${marked(p)}</p>`).join("")}
     ${R.rowsV.length ? `<h3 style="margin:16px 0 4px">Visitas</h3>` + table(["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], R.rowsV.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5]]), [4]) : ""}
     ${R.rowsT.length ? `<h3 style="margin:16px 0 4px">Pedidos por teléfono</h3>` + table(["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], R.rowsT.map(r => [r[0], r[1], r[2], r[3], r[4] ? r[4] : "", r[5], r[6]]), [4]) : ""}
     ${R.rowsP.length ? `<h3 style="margin:16px 0 4px">Productos vendidos</h3>` + table(R.pHead, R.rowsP, R.pHead.length === 3 ? [1, 2] : [1]) : ""}
     ${R.rowsC.length ? `<h3 style="margin:16px 0 4px">Cobros recogidos</h3>` + table(["Farmacia", "Venta del", "Monto", "Forma"], R.rowsC, [2]) : ""}</div>`;
 }
 function reportText(R) {
-  let t = `${R.title}\n${R.subtitle}\n\n${R.paras.join("\n\n")}\n`;
+  let t = `${R.title}\n${R.subtitle}\n\n${R.paras.map(plainText).join("\n\n")}\n`;
   if (R.rowsV.length) t += `\nVISITAS\n` + R.rowsV.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin venta"}${r[2] ? ", habló con " + r[2] : ""}`).join("\n") + "\n";
   if (R.rowsT.length) t += `\nPEDIDOS POR TELÉFONO\n` + R.rowsT.map(r => `- ${r[0]} (${r[1]}): ${r[4] ? money(r[4]) + ", " + r[5] : "sin pedido"}${r[2] ? ", llamó " + r[2] : ""}${r[6] ? ", pidió visita" : ""}`).join("\n") + "\n";
   if (R.rowsP.length) t += `\nPRODUCTOS VENDIDOS\n` + R.rowsP.map(r => r.length === 3 ? `- ${r[0]}: ${r[1]}, ${money(r[2])}` : `- ${r[0]}: ${plural(r[1], "farmacia", "farmacias")}`).join("\n") + "\n";
@@ -1300,7 +1304,7 @@ function sheet(rows, widths) { const ws = XLSX.utils.aoa_to_sheet(rows); if (wid
 async function exportReportXlsx(R) {
   await ensureXLSX();
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheet([[R.title], [R.subtitle], [], ...R.paras.map(p => [p])], [120]), "Resumen");
+  XLSX.utils.book_append_sheet(wb, sheet([[R.title], [R.subtitle], [], ...R.paras.map(p => [plainText(p)])], [120]), "Resumen");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Habló con", "Gestiones", "Venta", "Término"], ...R.rowsV], [34, 14, 26, 36, 12, 14]), "Visitas");
   XLSX.utils.book_append_sheet(wb, sheet([["Farmacia", "Pueblo", "Llamó", "Pedido", "Total", "Término", "Pidió visita"], ...R.rowsT], [34, 14, 26, 36, 12, 14, 12]), "Teléfono");
   XLSX.utils.book_append_sheet(wb, sheet([R.pHead, ...R.rowsP], [26, 10, 12]), "Productos");
