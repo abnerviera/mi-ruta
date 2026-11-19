@@ -264,6 +264,29 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
   body{background:#fff}
   .report{border:0;padding:0}
 }
+/* calendario propio: días sin ruta en rojo */
+.cal{max-width:400px}
+.cal-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cal-h b{font-family:var(--cond);font-size:24px;font-weight:600;color:var(--pino)}
+.cal-nav{width:44px;height:44px;border-radius:50%;border:1px solid var(--linea);background:#fff;font-size:22px;color:var(--pino);line-height:1}
+.cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.cal-w{text-align:center;font-size:12px;font-weight:700;color:var(--gris);padding:4px 0}
+.cal-d{position:relative;aspect-ratio:1;min-height:42px;border:1px solid var(--linea);border-radius:10px;background:#fff;font-weight:700;font-size:16px;color:var(--tinta);padding:0}
+.cal-d.we{background:var(--papel);color:var(--gris-claro)}
+.cal-d.off{background:var(--rojo);border-color:var(--rojo);color:#fff}
+.cal-d.today{box-shadow:inset 0 0 0 2.5px var(--tinta)}
+.cal-d.off.today{box-shadow:inset 0 0 0 2.5px #fff}
+.cal-d.sel{outline:3px solid var(--pino);outline-offset:2px}
+.cal-d i{position:absolute;left:50%;bottom:5px;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:var(--pino)}
+.cal-d.off i{background:#fff}
+.cal-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:13px;color:var(--gris)}
+.cal-legend .lg{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:6px}
+.cal-legend .lg.off{background:var(--rojo)}
+.cal-legend .lg.dot{width:8px;height:8px;border-radius:50%;background:var(--pino);vertical-align:1px}
+.cal-legend .lg.today{background:#fff;box-shadow:inset 0 0 0 2.5px var(--tinta)}
+.date-btn{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border:1.5px solid var(--linea);border-radius:var(--r-s);background:#fff;font-weight:700}
+.date-btn .cal-ico{width:20px;height:20px;color:var(--pino)}
+.date-btn .offdot{width:10px;height:10px;border-radius:50%;background:var(--rojo)}
 .preview-bar{background:var(--ambar-fondo);color:var(--ambar-tinta);padding:9px 18px;font-size:14px;font-weight:700}
 @media (min-width:900px){.preview-bar{margin-left:var(--rail)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -280,7 +303,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "2.3";
+const APP_VERSION = "2.4";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -322,6 +345,7 @@ const ICON = {
   alerta: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17v.01"/>',
   reloj: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
   ok: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  cal: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   cheque: '<rect x="3" y="7" width="18" height="10" rx="1.5"/><path d="M6 13h6"/>',
 };
 const ico = (k, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
@@ -601,7 +625,8 @@ function viewHoy() {
   const hasVisits = visitsOn(d).length > 0;
   const editing = planDraft && planDraft.date === d && (planDraft.touched || (!plan && !hasVisits));
   const head = `<div class="page-head"><div><h1>${d === today() ? "Hoy" : cap(fmtD(d, {weekday: "long"}))}</h1><div class="sub">${esc(cap(fmtLong(d)))}</div></div>
-    <div class="row"><label class="field" style="min-width:180px"><span>Fecha de la ruta</span><input type="date" value="${d}" data-act-change="setViewDate"></label></div></div>`;
+    <div class="row wrap" style="align-items:flex-end">${d !== today() ? `<button class="btn small quiet" data-act="goToday">Volver a hoy</button>` : ""}<div class="field"><span>Fecha de la ruta</span>
+      <button class="date-btn" data-act="openCal" data-d="${d}" aria-label="Escoger el día. Ahora: ${esc(fmtLong(d))}">${ico("cal", "cal-ico")}${esc(cap(fmtD(d, {weekday: "short", day: "numeric", month: "short"})))}${(S.daysOff || {})[d] ? `<span class="offdot" aria-hidden="true"></span>` : ""}</button></div></div></div>`;
   const off = (S.daysOff || {})[d];
   if (off && !editing) return head + `<div class="panel tint"><h2 style="margin-bottom:6px">Día sin ruta: ${esc(off.reason.toLowerCase())}</h2>${off.note ? `<p>${esc(off.note)}</p>` : ""}
       <p class="small muted" style="margin-top:6px">Este día no cuenta en lo que te falta por día ni en la proyección del mes. La meta se queda igual.</p>
@@ -1079,7 +1104,8 @@ function dayOffSheet(date) {
     <p class="small muted">En un rango se marcan solo los días de lunes a viernes.</p>
     <div><p style="font-weight:700;margin-bottom:8px">Motivo</p><div class="chips" id="doReasons">${OFF_REASONS.map(r => `<button class="chip" aria-pressed="${reason === r}" data-r="${r}">${r}</button>`).join("")}</div></div>
     <label class="field"><span>Nota (opcional)</span><input type="text" id="doNote" value="${esc(cur?.note || "")}" placeholder="Por ejemplo: reunión de ventas en la oficina"></label>
-    <div class="row" style="justify-content:flex-end"><button class="btn primary" id="doSave">Guardar</button></div></div>`);
+    <div class="row" style="justify-content:space-between">${cur ? `<button class="btn danger small" id="doRemove">Quitar día sin ruta</button>` : "<span></span>"}<button class="btn primary" id="doSave">Guardar</button></div></div>`);
+  if (cur) $("#doRemove", o).onclick = () => { delete S.daysOff[date]; changed(); closeSheet(); toast("Día marcado como día de ruta"); render(); };
   $("#doReasons", o).addEventListener("click", e => { const b = e.target.closest("[data-r]"); if (!b) return; reason = b.dataset.r; $$("#doReasons .chip", o).forEach(x => x.setAttribute("aria-pressed", x === b)); });
   $("#doSave", o).onclick = () => {
     if (!reason) { toast("Escoge el motivo"); return; }
@@ -1167,6 +1193,39 @@ function routeDays(k, t, soldToday) {
   const worked = route.filter(d => d < t).length + (route.includes(t) && soldToday ? 1 : 0);
   return {total: route.length, left, weekdaysLeft, offLeft: weekdaysLeft - left, worked};
 }
+const DOW = ["L", "M", "M", "J", "V", "S", "D"];
+const shiftMonth = (k, n) => { const [y, m] = k.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+function calHTML(k, sel) {
+  const days = monthDays(k); const lead = (parseISO(days[0]).getDay() + 6) % 7;
+  const off = S.daysOff || {}; const t = today();
+  const busy = new Set(S.visits.filter(v => v.date.startsWith(k)).map(v => v.date));
+  for (const [d, p] of Object.entries(S.plans || {})) if (d.startsWith(k) && p.stops && p.stops.length) busy.add(d);
+  let cells = "<span></span>".repeat(lead);
+  for (const d of days) {
+    const o = off[d];
+    const cls = ["cal-d", o ? "off" : "", d === t ? "today" : "", d === sel ? "sel" : "", isWeekday(d) ? "" : "we"].filter(Boolean).join(" ");
+    cells += `<button class="${cls}" data-cal="${d}" aria-label="${esc(cap(fmtLong(d)))}${o ? `, sin ruta: ${esc(o.reason)}` : ""}${busy.has(d) ? ", con ruta o visitas" : ""}" title="${o ? esc(o.reason + (o.note ? ": " + o.note : "")) : ""}">${Number(d.slice(8))}${busy.has(d) ? "<i></i>" : ""}</button>`;
+  }
+  return `<div class="cal"><div class="cal-h"><button class="cal-nav" data-calnav="-1" aria-label="Mes anterior">‹</button><b>${esc(cap(monthName(k)))}</b><button class="cal-nav" data-calnav="1" aria-label="Mes siguiente">›</button></div>
+    <div class="cal-g">${DOW.map(x => `<span class="cal-w">${x}</span>`).join("")}${cells}</div>
+    <div class="cal-legend"><span><i class="lg off"></i>Sin ruta</span><span><i class="lg dot"></i>Ruta o visitas</span><span><i class="lg today"></i>Hoy</span></div></div>`;
+}
+function calSheet(sel) {
+  let k = sel.slice(0, 7);
+  const o = openSheet("Escoge el día", `<div id="calBox"></div><p class="small muted" style="margin-top:12px">Toca un día para ver o planificar su ruta.</p>`);
+  const draw = () => { $("#calBox", o).innerHTML = calHTML(k, sel); };
+  draw();
+  o.addEventListener("click", e => {
+    const n = e.target.closest("[data-calnav]"); if (n) { k = shiftMonth(k, Number(n.dataset.calnav)); draw(); return; }
+    const c = e.target.closest("[data-cal]"); if (c) { viewDate = c.dataset.cal; planDraft = null; closeSheet(); if (route().view !== "hoy") go("hoy"); else render(); }
+  });
+}
+let offCalMonth = null;
+document.addEventListener("click", e => {
+  const box = e.target.closest("#offCal"); if (!box) return;
+  const n = e.target.closest("[data-calnav]"); if (n) { offCalMonth = shiftMonth(offCalMonth || today().slice(0, 7), Number(n.dataset.calnav)); box.innerHTML = calHTML(offCalMonth, null); return; }
+  const c = e.target.closest("[data-cal]"); if (c) dayOffSheet(c.dataset.cal);
+});
 function offSummary(k) {
   const c = {}; for (const [d, o] of Object.entries(S.daysOff || {})) if (d.startsWith(k)) c[o.reason] = (c[o.reason] || 0) + 1;
   const n = Object.values(c).reduce((a, b) => a + b, 0);
@@ -1521,6 +1580,8 @@ function viewAjustes() {
         <label class="toggle"><input type="radio" name="sm" value="rapida" ${S.settings.saleMode !== "detallada" ? "checked" : ""} data-set-radio="saleMode"> Rápida: marcar los productos y escribir el total de la orden de la compañía</label>
         <label class="toggle"><input type="radio" name="sm" value="detallada" ${S.settings.saleMode === "detallada" ? "checked" : ""} data-set-radio="saleMode"> Detallada: cantidad y precio de cada producto</label></div>
       <div class="panel"><h2 style="margin-bottom:6px">Días sin ruta</h2><p class="small muted" style="margin-bottom:10px">Vacaciones, enfermedad, reuniones, feriados o mal tiempo. Esos días no cuentan en lo que te falta por día ni en la proyección; la meta se queda igual.</p>
+        <div id="offCal" style="margin-bottom:14px">${calHTML(offCalMonth || today().slice(0, 7), null)}</div>
+        <p class="small muted" style="margin-bottom:10px">Toca un día del calendario para marcarlo o cambiar su motivo.</p>
         ${(() => { const from = today().slice(0, 7) + "-01"; const list = Object.entries(S.daysOff || {}).filter(([d]) => d >= from).sort(([a], [b]) => a < b ? -1 : 1);
           return list.length ? `<div class="list">${list.map(([d, o]) => `<div class="item" style="min-height:52px"><div class="grow"><div class="t">${esc(cap(fmtD(d, {weekday: "long", day: "numeric", month: "long"})))}</div><div class="s">${esc(o.reason)}${o.note ? `, ${esc(o.note)}` : ""}</div></div><button class="btn small quiet" data-act="dayOffRemove" data-d="${d}" aria-label="Quitar día sin ruta">Quitar</button></div>`).join("")}</div>` : `<p class="muted">No hay días marcados este mes ni más adelante.</p>`; })()}
         <button class="btn small" style="margin-top:12px" data-act="dayOffEdit" data-d="${today()}">${ico("mas")}Marcar días sin ruta</button></div>
@@ -1590,6 +1651,8 @@ const A = {
   },
   planEdit() { const d = viewDate || today(); const p = S.plans[d] || {pueblos: [], stops: []}; planDraft = {date: d, pueblos: p.pueblos.slice(), stops: p.stops.slice(), routeId: null, saveAs: false, name: "", touched: true}; render(); },
   planCancel() { planDraft = null; render(); },
+  openCal(el) { calSheet(el.dataset.d || viewDate || today()); },
+  goToday() { viewDate = today(); planDraft = null; render(); },
   dayOffEdit(el) { dayOffSheet(el.dataset.d || today()); },
   dayOffRemove(el) { delete S.daysOff[el.dataset.d]; changed(); toast("Día marcado como día de ruta"); keepScroll(render); },
   pickVisit() { pickVisitSheet("visita"); },
