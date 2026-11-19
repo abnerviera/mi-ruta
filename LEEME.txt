@@ -19,6 +19,8 @@ Qué hace
   la meta ni la comisión. La venta pide solo los productos (el total es opcional) y no entra en Cobros.
   En el Resumen y en el reporte salen aparte.
 - Cobros: créditos al día (verde), por vencer (amarillo) y morosos (rojo), y marcar lo cobrado.
+- Días sin ruta (vacaciones, enfermedad, reuniones, feriados, mal tiempo): se marcan en Hoy o en Ajustes.
+  No cuentan en lo que falta por día ni en la proyección al cierre del mes. La meta no cambia.
 - Resumen: ventas del mes, comisión y cuánto falta para la meta, ventas por mes, ranking de farmacias,
   frecuencia de compra, ventas por pueblo y farmacias a las que les toca comprar.
 - Reporte: informe del día en narrativo y tablas para copiar al email, abrir en Mail, bajar en Excel o imprimir en PDF.

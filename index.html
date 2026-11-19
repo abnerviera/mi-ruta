@@ -280,7 +280,7 @@ input.need{border-color:var(--rojo);background:var(--rojo-fondo)}
    Mi Ruta — app de ventas para visitas a farmacias
    Datos guardados en este dispositivo (IndexedDB).
    ========================================================= */
-const APP_VERSION = "2.2";
+const APP_VERSION = "2.3";
 const TODAY_OVERRIDE = null; // para pruebas: "2026-11-16"
 
 /* ---------- utilidades ---------- */
@@ -414,6 +414,7 @@ function migrate(st) {
   // Versiones anteriores ponían "Marilyn" como nombre aunque la app empezara sin datos.
   if (!(st.pharmacies || []).length && !(st.sales || []).length && st.settings.seller === "Marilyn") st.settings.seller = "";
   if (!st.chainInit) { for (const p of st.pharmacies || []) if (CHAIN_RE.test(p.name)) p.chain = true; st.chainInit = true; }
+  st.daysOff = st.daysOff || {};
   st.routes = st.routes || []; st.stopOrder = st.stopOrder || {}; st.plans = st.plans || {}; st.visits = st.visits || [];
   st.extraPueblos = st.extraPueblos || []; st.actions = st.actions || DEFAULT_ACTIONS.slice(); st.brands = st.brands || JSON.parse(JSON.stringify(DEFAULT_BRANDS));
   return st;
@@ -601,6 +602,12 @@ function viewHoy() {
   const editing = planDraft && planDraft.date === d && (planDraft.touched || (!plan && !hasVisits));
   const head = `<div class="page-head"><div><h1>${d === today() ? "Hoy" : cap(fmtD(d, {weekday: "long"}))}</h1><div class="sub">${esc(cap(fmtLong(d)))}</div></div>
     <div class="row"><label class="field" style="min-width:180px"><span>Fecha de la ruta</span><input type="date" value="${d}" data-act-change="setViewDate"></label></div></div>`;
+  const off = (S.daysOff || {})[d];
+  if (off && !editing) return head + `<div class="panel tint"><h2 style="margin-bottom:6px">Día sin ruta: ${esc(off.reason.toLowerCase())}</h2>${off.note ? `<p>${esc(off.note)}</p>` : ""}
+      <p class="small muted" style="margin-top:6px">Este día no cuenta en lo que te falta por día ni en la proyección del mes. La meta se queda igual.</p>
+      <div class="row wrap" style="margin-top:14px;gap:10px"><button class="btn" data-act="dayOffRemove" data-d="${d}">Sí salgo a ruta</button><button class="btn quiet" data-act="dayOffEdit" data-d="${d}">Cambiar motivo</button>
+      <button class="btn quiet" data-act="pickCall">${ico("tel")}Pedido por teléfono</button></div></div>`
+    + (hasVisits ? `<div class="section">${routeView(d, plan || {pueblos: [], stops: []})}</div>` : "");
   if (editing || (!plan && !hasVisits)) return head + planner(d);
   return head + routeView(d, plan || {pueblos: [], stops: []});
 }
@@ -636,7 +643,7 @@ function planner(d) {
   });
   const order = pd.stops.map((id, i) => { const p = P(id)?.p; return `<li><span class="nb on">${i + 1}</span><div class="grow"><b>${esc(p?.name || "")}</b><div class="small muted">${esc(p?.pueblo || "")}</div></div>
       <button class="mv" data-act="planMove" data-i="${i}" data-d="-1" ${i === 0 ? "disabled" : ""} aria-label="Subir">↑</button><button class="mv" data-act="planMove" data-i="${i}" data-d="1" ${i === pd.stops.length - 1 ? "disabled" : ""} aria-label="Bajar">↓</button><button class="mv" data-act="planToggle" data-id="${id}" aria-label="Quitar">×</button></li>`; }).join("");
-  return `<div class="panel tint"><h2 style="margin-bottom:4px">Planifica la ruta</h2>
+  return `<div class="panel tint"><div class="row wrap" style="justify-content:space-between;margin-bottom:4px"><h2>Planifica la ruta</h2><button class="btn small quiet" data-act="dayOffEdit" data-d="${d}">No salgo a ruta este día</button></div>
     ${routes ? `<p class="muted" style="margin:10px 0 8px">Tus rutas guardadas</p><div class="chips" style="margin-bottom:14px">${routes}</div><p class="muted" style="margin-bottom:8px">O escoge los pueblos en el orden en que los vas a visitar.</p>` : `<p class="muted" style="margin-bottom:14px">Escoge los pueblos en el orden en que los vas a visitar.</p>`}
     <div class="chips">${chips}</div>${reqBlock}</div>
     <div class="plan-grid"><div>${lists || (pd.pueblos.length ? "" : `<p class="muted section">Cuando escojas un pueblo, aquí salen sus farmacias.</p>`)}</div>
@@ -684,7 +691,8 @@ function routeView(d, plan) {
     <div class="section"><div class="list">${groups}</div></div>
     <div class="row wrap" style="margin-top:16px;gap:10px"><button class="btn" data-act="pickVisit">${ico("mas")}Visita fuera de ruta</button>
       <button class="btn" data-act="pickCall">${ico("tel")}Pedido por teléfono</button>
-      <button class="btn quiet" data-act="nav" data-to="reporte">Ver reporte del día</button></div>`;
+      <button class="btn quiet" data-act="nav" data-to="reporte">Ver reporte del día</button>
+      ${(S.daysOff || {})[d] ? "" : `<button class="btn quiet" data-act="dayOffEdit" data-d="${d}">No salgo a ruta este día</button>`}</div>`;
 }
 function stopRow(id, d, vis, n) {
   const x = P(id); if (!x) return "";
@@ -1062,6 +1070,28 @@ function editContactsSheet(id) {
     <div class="row" style="justify-content:flex-end"><button class="btn primary" id="ecSave">Guardar contactos</button></div></div>`);
   $("#ecSave", o).onclick = () => { p.contacts = p.contacts || {}; for (const k of Object.keys(ROLES)) p.contacts[k] = $("#ec-" + k, o).value.trim(); changed(); closeSheet(); toast("Contactos guardados"); render(); };
 }
+function dayOffSheet(date) {
+  const cur = (S.daysOff || {})[date];
+  let reason = cur ? cur.reason : "";
+  const o = openSheet("Día sin ruta", `<div class="stack">
+    <div class="grid2"><label class="field"><span>Desde</span><input type="date" id="doFrom" value="${date}"></label>
+      <label class="field"><span>Hasta (si son varios días)</span><input type="date" id="doTo" value="${date}"></label></div>
+    <p class="small muted">En un rango se marcan solo los días de lunes a viernes.</p>
+    <div><p style="font-weight:700;margin-bottom:8px">Motivo</p><div class="chips" id="doReasons">${OFF_REASONS.map(r => `<button class="chip" aria-pressed="${reason === r}" data-r="${r}">${r}</button>`).join("")}</div></div>
+    <label class="field"><span>Nota (opcional)</span><input type="text" id="doNote" value="${esc(cur?.note || "")}" placeholder="Por ejemplo: reunión de ventas en la oficina"></label>
+    <div class="row" style="justify-content:flex-end"><button class="btn primary" id="doSave">Guardar</button></div></div>`);
+  $("#doReasons", o).addEventListener("click", e => { const b = e.target.closest("[data-r]"); if (!b) return; reason = b.dataset.r; $$("#doReasons .chip", o).forEach(x => x.setAttribute("aria-pressed", x === b)); });
+  $("#doSave", o).onclick = () => {
+    if (!reason) { toast("Escoge el motivo"); return; }
+    let from = $("#doFrom", o).value || date, to = $("#doTo", o).value || from;
+    if (to < from) [from, to] = [to, from];
+    if (daysBetween(from, to) > 62) { toast("Marca como máximo dos meses a la vez"); return; }
+    const note = $("#doNote", o).value.trim(); let n = 0;
+    for (let d = from; d <= to; d = addDays(d, 1)) if (from === to || isWeekday(d)) { S.daysOff[d] = {reason, note}; n++; }
+    changed(); closeSheet(); planDraft = null;
+    toast(n === 1 ? "Día marcado sin ruta" : `${n} días marcados sin ruta`); render();
+  };
+}
 function pickVisitSheet(kind) {
   const d = viewDate || today();
   const o = openSheet(kind === "llamada" ? "Pedido por teléfono: ¿qué farmacia llamó?" : "Visita fuera de ruta", `<div class="search">${ico("buscar")}<input type="search" id="pvQ" placeholder="Buscar farmacia" autofocus></div><div class="list" id="pvList" style="margin-top:12px"></div>`);
@@ -1123,10 +1153,26 @@ function commission(total) {
   if (total < c.target) return {amount: c.fixed, reached: false};
   return {amount: c.mode === "excedente" ? c.fixed + (total - c.target) * c.rate / 100 : total * c.rate / 100, reached: true};
 }
-function workdaysLeft(t) {
-  const d = parseISO(t); const m = d.getMonth(); let n = 0;
-  while (d.getMonth() === m) { const w = d.getDay(); if (w > 0 && w < 6) n++; d.setDate(d.getDate() + 1); }
-  return n;
+/* Días de ruta: lunes a viernes que no están marcados como días sin ruta. La meta no cambia. */
+const OFF_REASONS = ["Enfermedad", "Vacaciones", "Reunión", "Feriado", "Mal tiempo", "Otro"];
+const isWeekday = s => { const w = parseISO(s).getDay(); return w > 0 && w < 6; };
+function monthDays(k) { const [y, m] = k.split("-").map(Number); const n = new Date(y, m, 0).getDate(); return Array.from({length: n}, (_, i) => `${k}-${pad(i + 1)}`); }
+function routeDays(k, t, soldToday) {
+  const off = S.daysOff || {};
+  const wk = monthDays(k).filter(isWeekday);
+  const route = wk.filter(d => !off[d]);
+  const left = route.filter(d => d >= t).length;
+  const weekdaysLeft = wk.filter(d => d >= t).length;
+  // Días trabajados: los de ruta antes de hoy, y hoy si ya vendió.
+  const worked = route.filter(d => d < t).length + (route.includes(t) && soldToday ? 1 : 0);
+  return {total: route.length, left, weekdaysLeft, offLeft: weekdaysLeft - left, worked};
+}
+function offSummary(k) {
+  const c = {}; for (const [d, o] of Object.entries(S.daysOff || {})) if (d.startsWith(k)) c[o.reason] = (c[o.reason] || 0) + 1;
+  const n = Object.values(c).reduce((a, b) => a + b, 0);
+  const dias = x => x === 1 ? "1 día" : `${x} días`;
+  const txt = (r, x) => r === "Feriado" ? (x === 1 ? "1 feriado" : `${x} feriados`) : r === "Mal tiempo" ? `${dias(x)} por mal tiempo` : r === "Otro" ? `${dias(x)} por otro motivo` : `${dias(x)} de ${r.toLowerCase()}`;
+  return n ? listJoin(Object.entries(c).map(([r, x]) => txt(r, x))) : "";
 }
 function viewResumen() {
   const t = today(); const cur = monthKey(t);
@@ -1138,7 +1184,11 @@ function viewResumen() {
   const pct = Math.min(1, total / (c.target * 1.25));
   const goalPos = c.target / (c.target * 1.25);
   const left = Math.max(0, c.target - total);
-  const wd = k === cur ? workdaysLeft(t) : 0;
+  const soldToday = ms.some(s => s.date === t);
+  const rd = routeDays(k, t, soldToday);
+  const wd = k === cur ? rd.left : 0;
+  const proj = k === cur && rd.worked > 0 ? r2(total / rd.worked * rd.total) : null;
+  const offTxt = offSummary(k);
   const open = S.sales.filter(s => s._st.k !== "pagada");
   const sumK = kk => open.filter(s => s._st.k === kk).reduce((a, s) => a + s._st.bal, 0);
   const months = [...new Set(S.sales.map(s => monthKey(s.date)).concat([cur]))].sort();
@@ -1166,9 +1216,12 @@ function viewResumen() {
       <div class="hero-num num">${money(total)}</div>
       <div class="meter" role="img" aria-label="${Math.round(total / c.target * 100)}% de la meta"><div class="fill" style="width:${pct * 100}%"></div><div class="goal" style="left:${goalPos * 100}%"></div></div>
       <div class="row small muted" style="justify-content:space-between"><span>${plural(ms.length, "venta", "ventas")}, ${plural(visits, "visita", "visitas")}${callsN ? `, ${plural(callsN, "pedido", "pedidos")} por teléfono` : ""}</span><span>Meta ${money0(c.target)}</span></div>
+      ${offTxt ? `<p class="small muted" style="margin-top:6px">Días sin ruta en ${esc(monthName(k).split(" ")[0])}: ${esc(offTxt)}.</p>` : ""}
       ${chainMs.length ? `<p class="small muted" style="margin-top:6px">Farmacias de cadena: ${money(chainMs.reduce((a, s) => a + s.total, 0))} en ${plural(chainMs.length, "venta", "ventas")}. No cuentan para la meta ni la comisión.</p>` : ""}
       <p style="margin-top:14px;font-size:18px">${com.reached ? `<b>Meta alcanzada.</b> Comisión estimada: <b>${money(com.amount)}</b> (${c.rate}% ${c.mode === "excedente" ? "del excedente más el fijo" : "de la venta del mes"}).`
-        : `Te faltan <b>${money(left)}</b> para la meta.${wd ? ` Son ${money(left / wd)} por día en los ${plural(wd, "día laborable", "días laborables")} que quedan.` : ""} Comisión estimada: <b>${money(com.amount)}</b> (fijo). Al llegar a la meta: ${money(c.mode === "excedente" ? c.fixed : c.target * c.rate / 100)} o más.`}</p></div>
+        : `Te faltan <b>${money(left)}</b> para la meta.${k === cur ? (wd ? ` Te quedan <b>${plural(wd, "día de ruta", "días de ruta")}</b>${rd.offLeft ? ` (${rd.weekdaysLeft} laborables menos ${rd.offLeft} sin ruta)` : ""}: son <b>${money(left / wd)} por día</b>.` : " No te quedan días de ruta este mes.") : ""} Comisión estimada: <b>${money(com.amount)}</b> (fijo). Al llegar a la meta: ${money(c.mode === "excedente" ? c.fixed : c.target * c.rate / 100)} o más.`}</p>
+      ${proj != null ? `<p style="margin-top:10px">A este ritmo cerrarías el mes en <b>${money(proj)}</b>${proj >= c.target ? ", por encima de la meta" : `: te faltarían ${money(c.target - proj)} para la meta`}, con una comisión de ${money(commission(proj).amount)}.</p>
+        <p class="small muted" style="margin-top:4px">Promedio de ${money(total / rd.worked)} por día de ruta en ${plural(rd.worked, "día trabajado", "días trabajados")}, de ${rd.total} días de ruta del mes.</p>` : ""}</div>
     <div class="stack"><div class="stat morosa"><div class="v num">${money(sumK("morosa"))}</div><div class="l">${tagFor("morosa", "Morosas")} ${open.filter(s => s._st.k === "morosa").length} ventas</div></div>
       <div class="stat porvencer"><div class="v num">${money(sumK("porvencer"))}</div><div class="l">${tagFor("porvencer", "Por vencer")} en ${S.settings.warnDays} días o menos</div></div>
       <div class="stat total"><div class="v num">${money(open.reduce((a, s) => a + s._st.bal, 0))}</div><div class="l">Por cobrar en total, ${plural(new Set(open.map(s => s.pharmacyId)).size, "farmacia", "farmacias")}</div></div>
@@ -1467,6 +1520,10 @@ function viewAjustes() {
       <div class="panel"><h2 style="margin-bottom:6px">Forma de registrar la venta</h2>
         <label class="toggle"><input type="radio" name="sm" value="rapida" ${S.settings.saleMode !== "detallada" ? "checked" : ""} data-set-radio="saleMode"> Rápida: marcar los productos y escribir el total de la orden de la compañía</label>
         <label class="toggle"><input type="radio" name="sm" value="detallada" ${S.settings.saleMode === "detallada" ? "checked" : ""} data-set-radio="saleMode"> Detallada: cantidad y precio de cada producto</label></div>
+      <div class="panel"><h2 style="margin-bottom:6px">Días sin ruta</h2><p class="small muted" style="margin-bottom:10px">Vacaciones, enfermedad, reuniones, feriados o mal tiempo. Esos días no cuentan en lo que te falta por día ni en la proyección; la meta se queda igual.</p>
+        ${(() => { const from = today().slice(0, 7) + "-01"; const list = Object.entries(S.daysOff || {}).filter(([d]) => d >= from).sort(([a], [b]) => a < b ? -1 : 1);
+          return list.length ? `<div class="list">${list.map(([d, o]) => `<div class="item" style="min-height:52px"><div class="grow"><div class="t">${esc(cap(fmtD(d, {weekday: "long", day: "numeric", month: "long"})))}</div><div class="s">${esc(o.reason)}${o.note ? `, ${esc(o.note)}` : ""}</div></div><button class="btn small quiet" data-act="dayOffRemove" data-d="${d}" aria-label="Quitar día sin ruta">Quitar</button></div>`).join("")}</div>` : `<p class="muted">No hay días marcados este mes ni más adelante.</p>`; })()}
+        <button class="btn small" style="margin-top:12px" data-act="dayOffEdit" data-d="${today()}">${ico("mas")}Marcar días sin ruta</button></div>
       <div class="panel"><h2 style="margin-bottom:12px">Créditos</h2><label class="field"><span>Avisar en amarillo cuando falten estos días para vencer</span><input type="number" inputmode="numeric" min="0" max="15" value="${S.settings.warnDays}" data-set="warnDays"></label></div>
       <div class="panel"><h2 style="margin-bottom:12px">Tu nombre</h2><label class="field"><span>Sale en el reporte del día</span><input type="text" value="${esc(S.settings.seller || "")}" placeholder="Por ejemplo: Juan Pérez" autocomplete="name" data-set="seller"></label></div>
       <div class="panel tint"><h2 style="margin-bottom:6px">Respaldo</h2>
@@ -1533,6 +1590,8 @@ const A = {
   },
   planEdit() { const d = viewDate || today(); const p = S.plans[d] || {pueblos: [], stops: []}; planDraft = {date: d, pueblos: p.pueblos.slice(), stops: p.stops.slice(), routeId: null, saveAs: false, name: "", touched: true}; render(); },
   planCancel() { planDraft = null; render(); },
+  dayOffEdit(el) { dayOffSheet(el.dataset.d || today()); },
+  dayOffRemove(el) { delete S.daysOff[el.dataset.d]; changed(); toast("Día marcado como día de ruta"); keepScroll(render); },
   pickVisit() { pickVisitSheet("visita"); },
   pickCall() { pickVisitSheet("llamada"); },
   pvPick(el) { closeSheet(); startVisit(el.dataset.id, el.dataset.kind === "llamada" ? today() : el.dataset.date, el.dataset.kind); },
